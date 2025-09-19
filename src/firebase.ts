@@ -1,32 +1,51 @@
-// src/firebase.ts
 import { initializeApp } from "firebase/app";
 import {
-  getAuth, signInAnonymously, onAuthStateChanged,
-  connectAuthEmulator, User
+  getAuth,
+  onAuthStateChanged,
+  signInAnonymously,
+  connectAuthEmulator,
+  type User,
 } from "firebase/auth";
 import {
-  getFirestore, connectFirestoreEmulator,
-  doc, getDoc, setDoc, updateDoc, addDoc, getDocs,
-  collection, serverTimestamp, query, where
+  getFirestore,
+  connectFirestoreEmulator,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  addDoc,
+  getDocs,
+  collection,
+  serverTimestamp,
+  query,
+  where,
 } from "firebase/firestore";
+import type {
+  Arena,
+  BossProfile,
+  LeaderboardEntry,
+  PlayerProfile,
+} from "./types/models";
+export type { Arena, BossProfile, LeaderboardEntry, PlayerProfile };
 
-// --- Config (stickfightpa) ---
-const firebaseConfig = {
+// --- Firebase config (keep as given) ---
+export const firebaseConfig = {
   apiKey: "AIzaSyAfqKN-zpIpwblhcafgKEneUnAfcTUV0-A",
   authDomain: "stickfightpa.firebaseapp.com",
   projectId: "stickfightpa",
   storageBucket: "stickfightpa.firebasestorage.app",
   messagingSenderId: "116175306919",
-  appId: "1:116175306919:web:2e483bbc453498e8f3db82"
+  appId: "1:116175306919:web:2e483bbc453498e8f3db82",
 };
 
+// --- Core singletons ---
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-// Optional: emulator hook
+// --- Dev emulator hook (no-op in prod) ---
 export const maybeConnectEmulators = () => {
-  if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATORS === "true") {
+  if (import.meta.env?.DEV && import.meta.env?.VITE_USE_FIREBASE_EMULATORS === "true") {
     try {
       connectAuthEmulator(auth, "http://127.0.0.1:9099");
       connectFirestoreEmulator(db, "127.0.0.1", 8080);
@@ -37,7 +56,7 @@ export const maybeConnectEmulators = () => {
   }
 };
 
-// ---- Auth helpers ----
+// --- Auth helpers expected by the app ---
 export async function ensureAnonAuth(): Promise<User> {
   if (!auth.currentUser) {
     const cred = await signInAnonymously(auth);
@@ -45,89 +64,78 @@ export async function ensureAnonAuth(): Promise<User> {
   }
   return auth.currentUser!;
 }
-export function onAuth(cb: (uid: string|null)=>void) {
+export function onAuth(cb: (uid: string | null) => void): void {
   onAuthStateChanged(auth, (u) => cb(u?.uid ?? null));
 }
-export const signInAnonymouslyWithTracking = async () => {
+export const signInAnonymouslyWithTracking = async (): Promise<User> => {
   const cred = await signInAnonymously(auth);
   return cred.user;
 };
 
-// ---- Lightweight types ----
-type ISODate = string;
-export interface BossProfile { id: string; displayName: string; createdAt: ISODate; }
-export interface PlayerProfile {
-  id: string; codename: string; passcode?: string;
-  preferredArenaId?: string; createdAt: ISODate; lastActiveAt?: ISODate;
-}
-export interface Arena {
-  id: string; name: string; description?: string; capacity?: number | null;
-  isActive: boolean; createdAt: ISODate;
-}
-export interface LeaderboardEntry {
-  id: string; playerId: string; playerCodename?: string;
-  wins: number; losses: number; streak: number; updatedAt: ISODate;
-}
-
-// ---- Boss profile (placeholder single boss) ----
+// --- Boss profile (simple singleton doc) ---
 export const ensureBossProfile = async (displayName: string) => {
   const ref = doc(db, "boss", "primary");
   const snap = await getDoc(ref);
   if (!snap.exists()) {
-    const profile: BossProfile = { id:"primary", displayName, createdAt: new Date().toISOString() };
+    const profile: BossProfile = { id: "primary", displayName, createdAt: new Date().toISOString() };
     await setDoc(ref, profile);
   }
   const again = await getDoc(ref);
   return again.data() as BossProfile | undefined;
 };
 
-// ---- Players ----
+// --- Players & passcodes ---
 export interface CreatePlayerInput { codename: string; passcode: string; preferredArenaId?: string; }
+
 export const createPlayer = async (input: CreatePlayerInput) => {
-  const playersRef = collection(db, "players");
   const now = serverTimestamp();
-  const pRef = await addDoc(playersRef, {
+  const pRef = await addDoc(collection(db, "players"), {
     codename: input.codename,
-    passcode: input.passcode,               // DEV ONLY; lock down later
+    passcode: input.passcode,
     preferredArenaId: input.preferredArenaId ?? null,
-    createdAt: now
+    createdAt: now,
   });
-  // Passcode mapping for O(1) lookup
+  // map passcode → playerId for O(1) lookup
   await setDoc(doc(db, "passcodes", input.passcode), { playerId: pRef.id, createdAt: now });
   return pRef.id;
 };
 
 export const findPlayerByPasscode = async (passcode: string) => {
-  // Preferred path: passcodes/{passcode}
-  const pc = await getDoc(doc(db, "passcodes", passcode));
-  if (pc.exists()) {
-    const playerId = (pc.data() as any).playerId as string;
-    const pSnap = await getDoc(doc(db, "players", playerId));
-    if (pSnap.exists()) {
-      const d = pSnap.data() as any;
-      const profile: PlayerProfile = {
-        id: pSnap.id,
+  // Fast path: dedicated mapping doc
+  const mapSnap = await getDoc(doc(db, "passcodes", passcode));
+  if (mapSnap.exists()) {
+    const playerId = (mapSnap.data() as any).playerId as string;
+    const p = await getDoc(doc(db, "players", playerId));
+    if (p.exists()) {
+      const d = p.data() as any;
+      const createdAt = d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString();
+      const lastActiveAt = d.lastActiveAt?.toDate?.().toISOString?.();
+      return {
+        id: p.id,
         codename: d.codename,
+        passcode,
         preferredArenaId: d.preferredArenaId ?? undefined,
-        createdAt: d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString(),
-        lastActiveAt: d.lastActiveAt?.toDate?.().toISOString?.()
-      };
-      return profile;
+        createdAt,
+        lastActiveAt,
+      } satisfies PlayerProfile;
     }
   }
-  // Fallback (DEV): query by passcode
-  const q = query(collection(db, "players"), where("passcode", "==", passcode));
-  const res = await getDocs(q);
+  // Fallback: query (older data shape)
+  const qy = query(collection(db, "players"), where("passcode", "==", passcode));
+  const res = await getDocs(qy);
   if (!res.empty) {
-    const docSnap = res.docs[0]; const d = docSnap.data() as any;
-    const profile: PlayerProfile = {
-      id: docSnap.id,
+    const s = res.docs[0];
+    const d = s.data() as any;
+    const createdAt = d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString();
+    const lastActiveAt = d.lastActiveAt?.toDate?.().toISOString?.();
+    return {
+      id: s.id,
       codename: d.codename,
+      passcode: d.passcode ?? passcode,
       preferredArenaId: d.preferredArenaId ?? undefined,
-      createdAt: d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString(),
-      lastActiveAt: d.lastActiveAt?.toDate?.().toISOString?.()
-    };
-    return profile;
+      createdAt,
+      lastActiveAt,
+    } satisfies PlayerProfile;
   }
   return undefined;
 };
@@ -136,39 +144,40 @@ export const updatePlayerActivity = async (playerId: string) => {
   await updateDoc(doc(db, "players", playerId), { lastActiveAt: serverTimestamp() });
 };
 
-// ---- Arenas ----
+// --- Arenas ---
 export interface CreateArenaInput { name: string; description?: string; capacity?: number; }
+
 export const createArena = async (input: CreateArenaInput) => {
-  const arenasRef = collection(db, "arenas");
   const now = serverTimestamp();
-  const aRef = await addDoc(arenasRef, {
+  const aRef = await addDoc(collection(db, "arenas"), {
     name: input.name,
     description: input.description ?? "",
     capacity: input.capacity ?? null,
     isActive: true,
-    createdAt: now
+    createdAt: now,
   });
   return aRef.id;
 };
 
-export const listArenas = async () => {
-  const snapshot = await getDocs(collection(db, "arenas"));
-  const arenas: Arena[] = snapshot.docs.map((s) => {
+export const listArenas = async (): Promise<Arena[]> => {
+  const snap = await getDocs(collection(db, "arenas"));
+  return snap.docs.map((s) => {
     const d = s.data() as any;
+    const createdAt = d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString();
     return {
       id: s.id,
       name: d.name,
       description: d.description ?? undefined,
       capacity: d.capacity ?? undefined,
-      isActive: Boolean(d.isActive),
-      createdAt: d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString()
-    };
+      isActive: !!d.isActive,
+      createdAt,
+    } as Arena;
   });
-  return arenas;
 };
 
-// ---- Leaderboard ----
+// --- Leaderboard ---
 export interface UpsertLeaderboardInput { playerId: string; wins?: number; losses?: number; streak?: number; }
+
 export const upsertLeaderboardEntry = async (input: UpsertLeaderboardInput) => {
   const ref = doc(db, "leaderboard", input.playerId);
   const snap = await getDoc(ref);
@@ -179,7 +188,7 @@ export const upsertLeaderboardEntry = async (input: UpsertLeaderboardInput) => {
       wins: input.wins ?? 0,
       losses: input.losses ?? 0,
       streak: input.streak ?? 0,
-      updatedAt: now
+      updatedAt: now,
     });
     return;
   }
@@ -188,20 +197,21 @@ export const upsertLeaderboardEntry = async (input: UpsertLeaderboardInput) => {
     wins: input.wins ?? cur.wins ?? 0,
     losses: input.losses ?? cur.losses ?? 0,
     streak: input.streak ?? cur.streak ?? 0,
-    updatedAt: now
+    updatedAt: now,
   });
 };
 
-export const listLeaderboard = async () => {
-  const snapshot = await getDocs(collection(db, "leaderboard"));
-  const entries: LeaderboardEntry[] = await Promise.all(
-    snapshot.docs.map(async (s) => {
+export const listLeaderboard = async (): Promise<LeaderboardEntry[]> => {
+  const snap = await getDocs(collection(db, "leaderboard"));
+  return Promise.all(
+    snap.docs.map(async (s) => {
       const d = s.data() as any;
       let playerCodename: string | undefined;
       try {
         const p = await getDoc(doc(db, "players", d.playerId));
         playerCodename = p.data()?.codename;
       } catch {}
+      const updatedAt = d.updatedAt?.toDate?.().toISOString?.() ?? new Date().toISOString();
       return {
         id: s.id,
         playerId: d.playerId,
@@ -209,9 +219,10 @@ export const listLeaderboard = async () => {
         wins: d.wins ?? 0,
         losses: d.losses ?? 0,
         streak: d.streak ?? 0,
-        updatedAt: d.updatedAt?.toDate?.().toISOString?.() ?? new Date().toISOString()
-      };
+        updatedAt,
+      } as LeaderboardEntry;
     })
   );
-  return entries;
 };
+
+// --- END OF FILE ---
