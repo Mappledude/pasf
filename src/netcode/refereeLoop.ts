@@ -1,296 +1,92 @@
-import type { InputIntent, Snapshot } from "../types/netcode";
-import { nowMs } from "../utils/time";
-import {
-  getInputsForTick,
-  getLatestSnapshot,
-  subscribeMatch,
-  writeSnapshot,
-} from "./refereeStore";
+import type { InputIntent, PlayerState, Snapshot } from "../types/netcode";
+import { getInputsForTick, writeSnapshot } from "./refereeStore";
 
 const DT = 0.05;
-const WORLD_WIDTH = 960;
-const WORLD_HEIGHT = 540;
-const GROUND_HEIGHT = 40;
-const PLAYER_WIDTH = 28;
-const PLAYER_HEIGHT = 48;
-const PLAYER_HALF_WIDTH = PLAYER_WIDTH / 2;
-const PLAYER_HALF_HEIGHT = PLAYER_HEIGHT / 2;
-const GROUND_Y = WORLD_HEIGHT - GROUND_HEIGHT - PLAYER_HALF_HEIGHT;
-const CEILING_Y = PLAYER_HALF_HEIGHT;
-const GRAVITY = 900;
-const MOVE_ACCEL = 1200;
-const MAX_SPEED = 240;
-const GROUND_FRICTION = 900;
-const AIR_FRICTION = 200;
-const JUMP_SPEED = 420;
-const MIN_SEPARATION = 36;
-const ATTACK_OFFSET = 28;
-const ATTACK_RANGE = 40;
-const ATTACK_HEIGHT = 60;
-const ATTACK_DURATION = 0.12;
-const ATTACK_COOLDOWN = 0.25;
-const DAMAGE = 10;
+const GRAV = 900;
+const GROUND_Y = 540 - 40;
+const MOVE = 220;
+const JUMP_VY = -420;
+const MAX_VX = 320;
 
-interface PlayerMeta {
-  attackTimer: number;
-  attackCooldown: number;
-  attackConsumed: boolean;
-  prevAttack: boolean;
-  prevJump: boolean;
-  facing: 1 | -1;
-}
+function stepOne(p: PlayerState, input?: InputIntent): PlayerState {
+  let vx = p.vx;
+  let vy = p.vy;
+  let x = p.x;
+  let y = p.y;
+  let hp = p.hp;
 
-interface SnapshotMeta {
-  p1: PlayerMeta;
-  p2: PlayerMeta;
-}
+  if (input?.left && !input?.right) vx = -MOVE;
+  else if (input?.right && !input?.left) vx = MOVE;
+  else vx = 0;
 
-const snapshotMeta = new WeakMap<Snapshot, SnapshotMeta>();
+  const onGround = y >= GROUND_Y;
+  if (input?.jump && onGround) vy = JUMP_VY;
 
-function makePlayerMeta(): PlayerMeta {
-  return {
-    attackTimer: 0,
-    attackCooldown: 0,
-    attackConsumed: false,
-    prevAttack: false,
-    prevJump: false,
-    facing: 1,
-  };
-}
+  vy += GRAV * DT;
+  x += vx * DT;
+  y += vy * DT;
 
-function makeSnapshotMeta(): SnapshotMeta {
-  return { p1: makePlayerMeta(), p2: makePlayerMeta() };
-}
-
-function ensureMeta(snapshot: Snapshot): SnapshotMeta {
-  let meta = snapshotMeta.get(snapshot);
-  if (!meta) {
-    meta = makeSnapshotMeta();
-    snapshotMeta.set(snapshot, meta);
-  }
-  return meta;
-}
-
-function approachZero(value: number, delta: number) {
-  if (value > 0) {
-    return Math.max(0, value - delta);
-  }
-  if (value < 0) {
-    return Math.min(0, value + delta);
-  }
-  return 0;
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function createInitialSnapshot(): Snapshot {
-  const snapshot: Snapshot = {
-    t: 0,
-    p1: { x: 240, y: GROUND_Y, vx: 0, vy: 0, hp: 100 },
-    p2: { x: 720, y: GROUND_Y, vx: 0, vy: 0, hp: 100 },
-    events: [],
-    ts: nowMs(),
-  };
-  snapshotMeta.set(snapshot, makeSnapshotMeta());
-  return snapshot;
-}
-
-function updateFacing(meta: PlayerMeta, input: InputIntent | undefined, selfX: number, otherX: number) {
-  if (input?.left && !input.right) {
-    meta.facing = -1;
-  } else if (input?.right && !input.left) {
-    meta.facing = 1;
-  } else if (Math.abs(selfX - otherX) > 2) {
-    meta.facing = selfX < otherX ? 1 : -1;
-  }
-}
-
-function handleAttack(
-  attacker: { state: Snapshot["p1"]; meta: PlayerMeta },
-  defender: { state: Snapshot["p1"]; meta: PlayerMeta },
-  events: string[],
-  defenderLabel: "p1" | "p2",
-) {
-  if (attacker.meta.attackTimer <= 0 || attacker.meta.attackConsumed) {
-    return;
-  }
-  const hitX = attacker.state.x + attacker.meta.facing * ATTACK_OFFSET;
-  const dx = Math.abs(hitX - defender.state.x);
-  const dy = Math.abs(attacker.state.y - defender.state.y);
-  if (dx <= ATTACK_RANGE && dy <= ATTACK_HEIGHT) {
-    attacker.meta.attackConsumed = true;
-    defender.state.hp = Math.max(0, defender.state.hp - DAMAGE);
-    events.push(`${defenderLabel}:hit`);
-    if (defender.state.hp <= 0) {
-      defender.state.hp = 100;
-      events.push(`${defenderLabel}:ko`);
-    }
-  }
-}
-
-function stepPlayer(
-  current: Snapshot["p1"],
-  input: InputIntent | undefined,
-  meta: PlayerMeta,
-): Snapshot["p1"] {
-  let vx = current.vx;
-  let vy = current.vy;
-  const onGround = current.y >= GROUND_Y - 0.5;
-  vy += GRAVITY * DT;
-
-  if (input?.left && !input.right) {
-    vx -= MOVE_ACCEL * DT;
-  } else if (input?.right && !input.left) {
-    vx += MOVE_ACCEL * DT;
-  } else {
-    const friction = onGround ? GROUND_FRICTION : AIR_FRICTION;
-    vx = approachZero(vx, friction * DT);
-  }
-
-  const wantsJump = (input?.jump || input?.up) ?? false;
-  if (wantsJump && !meta.prevJump && onGround) {
-    vy = -JUMP_SPEED;
-  }
-  meta.prevJump = wantsJump;
-
-  if (meta.attackCooldown > 0) {
-    meta.attackCooldown = Math.max(0, meta.attackCooldown - DT);
-  }
-  if (meta.attackTimer > 0) {
-    meta.attackTimer = Math.max(0, meta.attackTimer - DT);
-    if (meta.attackTimer === 0) {
-      meta.attackConsumed = false;
-    }
-  }
-
-  const attackHeld = !!input?.attack;
-  if (attackHeld && !meta.prevAttack && meta.attackCooldown <= 0) {
-    meta.attackTimer = ATTACK_DURATION;
-    meta.attackCooldown = ATTACK_COOLDOWN;
-    meta.attackConsumed = false;
-  }
-  meta.prevAttack = attackHeld;
-
-  vx = clamp(vx, -MAX_SPEED, MAX_SPEED);
-
-  let nx = current.x + vx * DT;
-  let ny = current.y + vy * DT;
-
-  if (ny >= GROUND_Y) {
-    ny = GROUND_Y;
-    vy = 0;
-  } else if (ny <= CEILING_Y) {
-    ny = CEILING_Y;
+  if (y > GROUND_Y) {
+    y = GROUND_Y;
     vy = 0;
   }
 
-  nx = clamp(nx, PLAYER_HALF_WIDTH, WORLD_WIDTH - PLAYER_HALF_WIDTH);
+  if (vx > MAX_VX) vx = MAX_VX;
+  if (vx < -MAX_VX) vx = -MAX_VX;
 
-  return { x: nx, y: ny, vx, vy, hp: current.hp };
+  return { x, y, vx, vy, hp };
 }
 
-export function applyRules(
-  prev: Snapshot,
-  inputs: { p1?: InputIntent; p2?: InputIntent },
-): Snapshot {
-  const prevMeta = ensureMeta(prev);
-  const nextMeta: SnapshotMeta = {
-    p1: { ...prevMeta.p1 },
-    p2: { ...prevMeta.p2 },
-  };
-
-  updateFacing(nextMeta.p1, inputs.p1, prev.p1.x, prev.p2.x);
-  updateFacing(nextMeta.p2, inputs.p2, prev.p2.x, prev.p1.x);
-
-  const nextP1 = stepPlayer(prev.p1, inputs.p1, nextMeta.p1);
-  const nextP2 = stepPlayer(prev.p2, inputs.p2, nextMeta.p2);
-
-  let dx = nextP2.x - nextP1.x;
-  const separation = Math.abs(dx);
-  if (separation < MIN_SEPARATION && separation > 0) {
-    const push = (MIN_SEPARATION - separation) / 2;
-    const direction = dx >= 0 ? -1 : 1;
-    nextP1.x = clamp(nextP1.x + direction * push, PLAYER_HALF_WIDTH, WORLD_WIDTH - PLAYER_HALF_WIDTH);
-    nextP2.x = clamp(nextP2.x - direction * push, PLAYER_HALF_WIDTH, WORLD_WIDTH - PLAYER_HALF_WIDTH);
-    dx = nextP2.x - nextP1.x;
-  }
-
+function resolveAttacks(p1: PlayerState, p2: PlayerState, i1?: InputIntent, i2?: InputIntent) {
+  const near = Math.abs(p1.x - p2.x) < 40 && Math.abs(p1.y - p2.y) < 12;
   const events: string[] = [];
-
-  handleAttack({ state: nextP1, meta: nextMeta.p1 }, { state: nextP2, meta: nextMeta.p2 }, events, "p2");
-  handleAttack({ state: nextP2, meta: nextMeta.p2 }, { state: nextP1, meta: nextMeta.p1 }, events, "p1");
-
-  const snapshot: Snapshot = {
-    t: prev.t + 1,
-    p1: nextP1,
-    p2: nextP2,
-    events: events.length ? events : undefined,
-    ts: nowMs(),
-  };
-  snapshotMeta.set(snapshot, nextMeta);
-  return snapshot;
+  if (i1?.attack && near) {
+    p2.hp = Math.max(0, p2.hp - 10);
+    events.push("p1_hit");
+  }
+  if (i2?.attack && near) {
+    p1.hp = Math.max(0, p1.hp - 10);
+    events.push("p2_hit");
+  }
+  if (p1.hp <= 0) {
+    p1.hp = 100;
+    events.push("p1_ko");
+  }
+  if (p2.hp <= 0) {
+    p2.hp = 100;
+    events.push("p2_ko");
+  }
+  return events;
 }
 
-export function startRefereeLoop(
-  matchId: string,
-  opts: { onTick?: (t: number) => void } = {},
-): () => void {
-  let disposed = false;
-  let ticking = false;
-  let latestSnapshot: Snapshot | null = null;
-  let initialized = false;
+export function applyRules(prev: Snapshot, inputs: { p1?: InputIntent; p2?: InputIntent }): Snapshot {
+  const p1 = stepOne(prev.p1, inputs.p1);
+  const p2 = stepOne(prev.p2, inputs.p2);
+  const events = resolveAttacks(p1, p2, inputs.p1, inputs.p2);
+  const t = prev.t + 1;
+  return { t, p1, p2, events, ts: Date.now() };
+}
 
-  const initPromise = (async () => {
-    const existing = await getLatestSnapshot(matchId);
-    if (existing) {
-      latestSnapshot = existing;
-      ensureMeta(existing);
-    } else {
-      latestSnapshot = createInitialSnapshot();
-      await writeSnapshot(matchId, latestSnapshot.t, latestSnapshot);
-    }
-    initialized = true;
-  })();
-
-  const unsubscribeMatch = subscribeMatch(matchId, (match) => {
-    if (latestSnapshot && match.tick > latestSnapshot.t) {
-      getLatestSnapshot(matchId)
-        .then((snap) => {
-          if (snap) {
-            latestSnapshot = snap;
-            ensureMeta(snap);
-          }
-        })
-        .catch((err) => console.warn("[refereeLoop] refresh snapshot failed", err));
-    }
-  });
-
-  const interval = setInterval(() => {
-    if (disposed || ticking || !initialized || !latestSnapshot) return;
-    ticking = true;
-    const nextTick = latestSnapshot.t + 1;
-    getInputsForTick(matchId, nextTick)
+export function startRefereeLoop(matchId: string, seed?: Partial<Snapshot>) {
+  let tick = seed?.t ?? 0;
+  let snap: Snapshot = {
+    t: seed?.t ?? 0,
+    p1: seed?.p1 ?? { x: 300, y: GROUND_Y, vx: 0, vy: 0, hp: 100 },
+    p2: seed?.p2 ?? { x: 660, y: GROUND_Y, vx: 0, vy: 0, hp: 100 },
+    events: seed?.events,
+    ts: Date.now(),
+  } as Snapshot;
+  const handle = setInterval(() => {
+    const next = tick + 1;
+    getInputsForTick(matchId, next)
       .then((inputs) => {
-        const snap = applyRules(latestSnapshot!, inputs);
-        latestSnapshot = snap;
-        return writeSnapshot(matchId, snap.t, snap).then(() => {
-          opts.onTick?.(snap.t);
-        });
+        snap = applyRules(snap, inputs);
+        tick = snap.t;
+        return writeSnapshot(matchId, tick, snap);
       })
       .catch((err) => {
         console.warn("[refereeLoop] tick failed", err);
-      })
-      .finally(() => {
-        ticking = false;
       });
   }, 50);
-
-  return () => {
-    disposed = true;
-    clearInterval(interval);
-    unsubscribeMatch();
-    void initPromise;
-  };
+  return () => clearInterval(handle);
 }

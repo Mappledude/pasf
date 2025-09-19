@@ -6,38 +6,23 @@ export function startClientLoop(
   slot: 1 | 2,
   getLocalIntent: () => InputIntent,
   onSnapshot: (s: Snapshot) => void,
-): () => void {
-  let disposed = false;
+) {
+  let lastSeq = -1;
   let latestTick = 0;
-  let lastSeqSent = -1;
-  let writing = false;
-
-  const unsubscribe = subscribeSnapshots(matchId, (snap) => {
+  const unsub = subscribeSnapshots(matchId, (snap) => {
     latestTick = Math.max(latestTick, snap.t);
     onSnapshot(snap);
   });
-
-  const interval = setInterval(() => {
-    if (disposed || writing) return;
+  const send = setInterval(() => {
     const intent = getLocalIntent();
-    if (intent.seq === lastSeqSent) return;
-    writing = true;
+    if (intent.seq !== lastSeq) {
+      lastSeq = intent.seq;
+    }
     const targetTick = latestTick + 1;
-    writeInput(matchId, targetTick, slot, intent)
-      .then(() => {
-        lastSeqSent = intent.seq;
-      })
-      .catch((err) => {
-        console.warn("[clientLoop] failed to write input", err);
-      })
-      .finally(() => {
-        writing = false;
-      });
+    writeInput(matchId, targetTick, slot, intent).catch(() => {});
   }, 50);
-
   return () => {
-    disposed = true;
-    clearInterval(interval);
-    unsubscribe();
+    clearInterval(send);
+    unsub();
   };
 }
