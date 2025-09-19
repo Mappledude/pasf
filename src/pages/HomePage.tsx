@@ -4,7 +4,7 @@ import { listArenas, listLeaderboard } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import type { Arena, LeaderboardEntry } from "../types/models";
 
-export const HomePage = () => {
+const HomePage = () => {
   const { login, player, loading } = useAuth();
   const navigate = useNavigate();
   const [passcode, setPasscode] = useState("");
@@ -125,3 +125,5 @@ export const HomePage = () => {
     </main>
   );
 };
+
+export default HomePage;
