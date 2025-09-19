@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
+    "clean:vite": "rimraf node_modules/.vite || rm -rf node_modules/.vite || true",
     "lint": "echo \"(optional) add eslint later\""
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "rimraf": "^5.0.7",
     "typescript": "^5.4.5",
     "vite": "^5.2.0"
   }
