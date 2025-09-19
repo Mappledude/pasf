@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>StickFight - Player Lobby</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>StickFight Training Grounds</h1>
+      <p class="notice">
+        Enter your secret passcode to join battles. Keep it safe!
+      </p>
+    </header>
+
+    <section id="login-card">
+      <form id="login-form">
+        <label for="passcode-input">Player Passcode</label>
+        <input id="passcode-input" name="passcode" type="password" minlength="6" required />
+        <button type="submit" class="large-button">Login</button>
+        <p id="login-status" class="notice"></p>
+      </form>
+    </section>
+
+    <main id="dashboard" hidden>
+      <section>
+        <h2>Welcome, <span id="player-name"></span>!</h2>
+        <div class="actions">
+          <button id="quick-match" class="large-button">Quick Match</button>
+          <button id="logout-btn">Log out</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Arenas</h2>
+        <div id="arenas" class="card-list"></div>
+      </section>
+    </main>
+
+    <script type="module" src="./index.js"></script>
+  </body>
+</html>
