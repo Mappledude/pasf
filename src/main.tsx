@@ -1,33 +1,23 @@
-import React, { Suspense, lazy } from "react";
-import ReactDOM from "react-dom/client";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import HomePage from "./pages/HomePage";
-import TrainingPage from "./pages/TrainingPage";
+cat > src/main.tsx <<'TS'
+import React from "react";
+import { createRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
+import App from "./App";
 import { AuthProvider } from "./context/AuthContext";
-import "./styles/global.css";
 
-const AdminPage = lazy(() => import("./pages/AdminPage"));
-const ArenaPage = lazy(() => import("./pages/ArenaPage"));
-const DebugFirebaseExports = lazy(() => import("./pages/DebugFirebaseExports"));
+const rootEl = document.getElementById("root");
+if (!rootEl) {
+  throw new Error("Missing #root element");
+}
+const root = createRoot(rootEl);
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
+root.render(
   <React.StrictMode>
     <BrowserRouter>
       <AuthProvider>
-        <Suspense fallback={<div style={{ padding: 16 }}>Loading…</div>}>
-          <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/admin" element={<AdminPage />} />
-            <Route path="/arena" element={<ArenaPage />} />
-            <Route path="/arena/:arenaId" element={<ArenaPage />} />
-            <Route path="/training" element={<TrainingPage />} />
-            <Route path="/debug/firebase-exports" element={<DebugFirebaseExports />} />
-            <Route path="/index.html" element={<Navigate to="/" replace />} />
-            <Route path="/admin.html" element={<Navigate to="/admin" replace />} />
-            <Route path="/training.html" element={<Navigate to="/training" replace />} />
-          </Routes>
-        </Suspense>
+        <App />
       </AuthProvider>
     </BrowserRouter>
   </React.StrictMode>
 );
+TS
