@@ -3,6 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { listArenas, listLeaderboard } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import type { Arena, LeaderboardEntry } from "../types/models";
+import React from "react";
+
 
 const HomePage = () => {
   const { login, player, loading } = useAuth();
