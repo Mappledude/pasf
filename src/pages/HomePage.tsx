@@ -86,6 +86,17 @@ const HomePage = () => {
       </section>
 
       <section className="card">
+        <h2>Practice</h2>
+        <p>
+          Want to warm up solo? Open the standalone training arena in a new tab and
+          practice offline.
+        </p>
+        <a className="button-link" href="/training-standalone.html" target="_blank" rel="noreferrer">
+          Open Training (Standalone)
+        </a>
+      </section>
+
+      <section className="card">
         <h2>Arenas</h2>
         {isLoadingData ? (
           <p>Loading arenas…</p>

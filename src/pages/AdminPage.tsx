@@ -90,6 +90,11 @@ const AdminPage = () => {
       <section className="card">
         <h1>Admin Console</h1>
         <p>Use this console to manage players, arenas, and the leaderboard.</p>
+        <p>
+          <a className="button-link" href="/training-standalone.html" target="_blank" rel="noreferrer">
+            Open Training (Standalone)
+          </a>
+        </p>
         {status ? <p>{status}</p> : null}
       </section>
 

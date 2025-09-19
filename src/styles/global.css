@@ -58,6 +58,25 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.button-link {
+  display: inline-block;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6rem 1.2rem;
+  font-size: 1rem;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: #1d4ed8;
+  color: white;
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+
+.button-link:hover {
+  border-color: #93c5fd;
+  color: white;
+}
+
 input,
 select {
   padding: 0.5rem 0.75rem;
