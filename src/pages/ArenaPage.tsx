@@ -3,6 +3,8 @@ import { useParams } from "react-router-dom";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import type { Arena } from "../types/models";
+import React from "react";
+
 
 const ArenaPage = () => {
   const { arenaId } = useParams<{ arenaId: string }>();
