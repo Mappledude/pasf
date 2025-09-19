@@ -41,13 +41,10 @@ export const db = getFirestore(app);
 
 // ---- Optional emulator hook (used in dev by some pages) ----
 export const maybeConnectEmulators = () => {
-  // Only connect in dev if explicitly requested
-  // Add VITE_USE_FIREBASE_EMULATORS=true to .env if you want this path
   if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATORS === "true") {
     try {
       connectAuthEmulator(auth, "http://127.0.0.1:9099");
       connectFirestoreEmulator(db, "127.0.0.1", 8080);
-      // eslint-disable-next-line no-console
       console.info("[firebase] connected to emulators");
     } catch (e) {
       console.warn("[firebase] emulator connect skipped:", e);
@@ -110,7 +107,7 @@ export interface LeaderboardEntry {
   updatedAt: ISODate;
 }
 
-// ---- Boss profile (placeholder single-boss model) ----
+// ---- Boss profile (placeholder) ----
 export const ensureBossProfile = async (displayName: string) => {
   const ref = doc(db, "boss", "primary");
   const snap = await getDoc(ref);
@@ -133,7 +130,6 @@ export interface CreatePlayerInput {
   preferredArenaId?: string;
 }
 
-// Create a player with a passcode (MVP: plaintext; will secure later)
 export const createPlayer = async (input: CreatePlayerInput) => {
   const playersRef = collection(db, "players");
   const now = serverTimestamp();
@@ -143,7 +139,7 @@ export const createPlayer = async (input: CreatePlayerInput) => {
     preferredArenaId: input.preferredArenaId ?? null,
     createdAt: now
   });
-  // Create passcode mapping for O(1) lookup (doc id is the passcode)
+  // mapping for O(1) lookup
   await setDoc(doc(db, "passcodes", input.passcode), {
     playerId: docRef.id,
     createdAt: now
@@ -151,9 +147,7 @@ export const createPlayer = async (input: CreatePlayerInput) => {
   return docRef.id;
 };
 
-// Find player via passcode (either mapping or players query)
 export const findPlayerByPasscode = async (passcode: string) => {
-  // Preferred path: passcodes/{passcode} → playerId
   const pc = await getDoc(doc(db, "passcodes", passcode));
   if (pc.exists()) {
     const playerId = (pc.data() as any).playerId as string;
@@ -170,7 +164,6 @@ export const findPlayerByPasscode = async (passcode: string) => {
       return profile;
     }
   }
-  // Fallback: query players by passcode field (dev only)
   const q = query(collection(db, "players"), where("passcode", "==", passcode));
   const res = await getDocs(q);
   if (!res.empty) {
@@ -230,7 +223,7 @@ export const listArenas = async () => {
   return arenas;
 };
 
-// ---- Leaderboard (simple totals; optional) ----
+// ---- Leaderboard ----
 export interface UpsertLeaderboardInput {
   playerId: string;
   wins?: number;
@@ -270,9 +263,7 @@ export const listLeaderboard = async () => {
       try {
         const p = await getDoc(doc(db, "players", d.playerId));
         playerCodename = p.data()?.codename;
-      } catch (e) {
-        // ignore resolution failure
-      }
+      } catch {}
       return {
         id: s.id,
         playerId: d.playerId,
