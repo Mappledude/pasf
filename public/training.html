@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>StickFight — Training</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      html, body { height:100%; margin:0; background:#0f1115; color:#e6e6e6; font-family:system-ui, Arial; }
+      #hud { position:fixed; top:8px; left:8px; z-index:10; font-size:14px; }
+      a { color:#7dd3fc; text-decoration:none; }
+      .btn { display:inline-block; padding:6px 10px; background:#1f2937; border:1px solid #374151; border-radius:6px; color:#e5e7eb; margin-right:8px; }
+      .btn:hover { background:#374151; }
+      #game { outline:1px solid #333; min-height:540px; }
+    </style>
+  </head>
+  <body>
+    <div id="hud">
+      <a class="btn" href="/index.html">← Lobby</a>
+      <span id="stats"></span>
+    </div>
+    <div id="game"></div>
+
+    <!-- Load Phaser UMD from CDN so we don't rely on Vite modules -->
+    <script src="https://unpkg.com/phaser@3/dist/phaser.js"></script>
+    <!-- Our standalone script (no imports) -->
+    <script src="/public/training.js"></script>
+  </body>
+</html>
