@@ -1,8 +1,19 @@
 <!doctype html>
 <html>
-  <meta charset="utf-8">
-  <title>STATIC TEST — training-standalone.html</title>
-  <body>
-    <h1>STATIC TEST — If you see this, the SPA did NOT intercept.</h1>
+  <head>
+    <meta charset="utf-8" />
+    <title>StickFight — Training (Standalone)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body style="margin:0;background:#0f1115;color:#e6e6e6;font-family:system-ui,Arial">
+    <div style="position:fixed;top:8px;left:8px;z-index:10">
+      <a href="/index.html" style="padding:6px 10px;background:#1f2937;border:1px solid #374151;border-radius:6px;color:#e5e7eb;text-decoration:none">← Lobby</a>
+      <span id="stats"></span>
+    </div>
+    <div id="game" style="outline:1px solid #333;min-height:540px"></div>
+
+    <script>console.info("[training-standalone] HTML loaded");</script>
+    <script src="https://unpkg.com/phaser@3/dist/phaser.js"></script>
+    <script src="/training-standalone.js"></script>
   </body>
 </html>
