@@ -1,6 +1,8 @@
 import { FormEvent, useEffect, useState } from "react";
 import { createArena, createPlayer, ensureBossProfile, listArenas, listLeaderboard } from "../firebase";
 import type { Arena, LeaderboardEntry } from "../types/models";
+import React from "react";
+
 
 const AdminPage = () => {
   const [bossName, setBossName] = useState("Boss");
