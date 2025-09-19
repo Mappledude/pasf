@@ -1,6 +1,5 @@
 (function () {
   console.info("[training-standalone.js] script loaded");
-
   if (!window.Phaser) {
     const el = document.getElementById("stats");
     if (el) el.textContent = "Failed to load Phaser (window.Phaser missing).";
@@ -24,14 +23,12 @@
     }
   });
 
-  var config = {
+  new Phaser.Game({
     type: Phaser.AUTO,
     width: 960,
     height: 540,
     parent: "game",
     backgroundColor: "#0f1115",
     scene: [TrainingScene]
-  };
-
-  new Phaser.Game(config);
+  });
 })();
