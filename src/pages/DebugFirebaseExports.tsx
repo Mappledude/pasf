@@ -1,20 +1,31 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 
 const DebugFirebaseExports: React.FC = () => {
-  const [keys, setKeys] = useState<string[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [keys, setKeys] = React.useState<string[] | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
 
-  useEffect(() => {
-    import("/src/firebase.ts")
-      .then((m) => setKeys(Object.keys(m)))
-      .catch((e) => setErr(String(e)));
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const mod = await import("../firebase");
+        const exportKeys = Object.keys(mod).sort();
+        setKeys(exportKeys);
+        // eslint-disable-next-line no-console
+        console.log("[debug/firebase-exports] keys:", exportKeys);
+      } catch (e: any) {
+        setError(e?.message ?? String(e));
+      }
+    })();
   }, []);
 
   return (
-    <div style={{ padding: 16, color: "#e6e6e6", background: "#0f1115", minHeight: "100vh" }}>
-      <h2>Firebase exports</h2>
-      {err && <pre style={{color:"#fca5a5"}}>{err}</pre>}
-      {keys && <pre>{JSON.stringify(keys, null, 2)}</pre>}
+    <div style={{ padding: 16, fontFamily: "system-ui, Arial" }}>
+      <h2>Debug: Firebase Exports</h2>
+      {error && <pre style={{ color: "tomato" }}>{error}</pre>}
+      {!keys && !error && <div>Loading…</div>}
+      {keys && (
+        <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(keys, null, 2)}</pre>
+      )}
     </div>
   );
 };
