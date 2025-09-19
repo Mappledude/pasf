@@ -1,3 +1,11 @@
+console.info("[training] module loaded");
+
+window.addEventListener("error", (e) => {
+  console.error("[training] window error:", e.message);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  console.error("[training] unhandled promise:", e.reason);
+});
 import Phaser from "phaser";
 import { Fireball } from "./attacks/Fireball";
 import { FixedStep } from "./core/FixedStep";
@@ -35,6 +43,7 @@ class TrainingScene extends Phaser.Scene {
   }
 
   create() {
+    console.info("[training] scene.create()");
     this.inputs = new Inputs();
     this.cameras.main.setBackgroundColor(0x0f1115);
     this.physics.world.setBounds(0, 0, 960, 540);
