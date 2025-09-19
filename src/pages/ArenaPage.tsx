@@ -4,7 +4,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import type { Arena } from "../types/models";
 
-export const ArenaPage = () => {
+const ArenaPage = () => {
   const { arenaId } = useParams<{ arenaId: string }>();
   const [arena, setArena] = useState<Arena | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,3 +67,5 @@ export const ArenaPage = () => {
     </main>
   );
 };
+
+export default ArenaPage;

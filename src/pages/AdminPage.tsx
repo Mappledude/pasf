@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { createArena, createPlayer, ensureBossProfile, listArenas, listLeaderboard } from "../firebase";
 import type { Arena, LeaderboardEntry } from "../types/models";
 
-export const AdminPage = () => {
+const AdminPage = () => {
   const [bossName, setBossName] = useState("Boss");
   const [playerCodename, setPlayerCodename] = useState("");
   const [playerPasscode, setPlayerPasscode] = useState("");
@@ -199,3 +199,5 @@ export const AdminPage = () => {
     </main>
   );
 };
+
+export default AdminPage;
