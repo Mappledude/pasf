@@ -1,73 +1,36 @@
-import { useEffect, useRef } from "react";
+export type KeyState = { left: boolean; right: boolean; up: boolean; jump: boolean; attack: boolean; seq: number };
 
-export type KeyIntentState = {
-  left: boolean;
-  right: boolean;
-  up: boolean;
-  jump: boolean;
-  attack: boolean;
-  seq: number;
-};
-
-const DEFAULT_STATE: KeyIntentState = {
-  left: false,
-  right: false,
-  up: false,
-  jump: false,
-  attack: false,
-  seq: 0,
-};
-
-const KEY_CODE_MAP: Record<string, keyof KeyIntentState | undefined> = {
-  KeyA: "left",
-  ArrowLeft: "left",
-  KeyD: "right",
-  ArrowRight: "right",
-  KeyW: "up",
-  ArrowUp: "up",
-  Space: "jump",
-  KeyJ: "attack",
-};
-
-export function useKeyBinder(target: Document | Window | null = typeof window !== "undefined" ? window : null) {
-  const stateRef = useRef<KeyIntentState>({ ...DEFAULT_STATE });
-
-  useEffect(() => {
-    if (!target) {
-      return;
+export function createKeyBinder(target: Window = window) {
+  const state: KeyState = { left: false, right: false, up: false, jump: false, attack: false, seq: 0 };
+  const set = (k: keyof KeyState, v: boolean) => {
+    if ((state as any)[k] !== v) {
+      (state as any)[k] = v;
+      state.seq++;
     }
-
-    const downHandler = (event: KeyboardEvent) => {
-      const key = KEY_CODE_MAP[event.code];
-      if (!key) return;
-      if (key === "seq") return;
-      const current = stateRef.current;
-      if (!current[key]) {
-        stateRef.current = { ...current, [key]: true, seq: current.seq + 1 };
-      }
-    };
-
-    const upHandler = (event: KeyboardEvent) => {
-      const key = KEY_CODE_MAP[event.code];
-      if (!key) return;
-      if (key === "seq") return;
-      const current = stateRef.current;
-      if (current[key]) {
-        stateRef.current = { ...current, [key]: false, seq: current.seq + 1 };
-      }
-    };
-
-    const downTarget: any = "addEventListener" in target ? target : window;
-    const upTarget: any = downTarget;
-
-    downTarget.addEventListener("keydown", downHandler);
-    upTarget.addEventListener("keyup", upHandler);
-
-    return () => {
-      downTarget.removeEventListener("keydown", downHandler);
-      upTarget.removeEventListener("keyup", upHandler);
-    };
-  }, [target]);
-
-  return stateRef;
+  };
+  const down = (e: KeyboardEvent) => {
+    switch (e.code) {
+      case "KeyA": set("left", true); break;
+      case "KeyD": set("right", true); break;
+      case "KeyW": set("up", true); set("jump", true); break;
+      case "Space": set("jump", true); break;
+      case "KeyJ": set("attack", true); break;
+    }
+  };
+  const up = (e: KeyboardEvent) => {
+    switch (e.code) {
+      case "KeyA": set("left", false); break;
+      case "KeyD": set("right", false); break;
+      case "KeyW": set("up", false); set("jump", false); break;
+      case "Space": set("jump", false); break;
+      case "KeyJ": set("attack", false); break;
+    }
+  };
+  target.addEventListener("keydown", down);
+  target.addEventListener("keyup", up);
+  const dispose = () => {
+    target.removeEventListener("keydown", down);
+    target.removeEventListener("keyup", up);
+  };
+  return { state, dispose };
 }

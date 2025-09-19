@@ -1,23 +1,18 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { doc, getDoc } from "firebase/firestore";
 import type { Arena } from "../types/models";
+import type { MatchStatus, Snapshot } from "../types/netcode";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { joinArena, leaveArena } from "../db";
+import { createKeyBinder } from "../game/input/KeyBinder";
+import { toIntent } from "../utils/input";
 import { joinOrCreate1v1, removePlayerFromMatch, subscribeMatch } from "../netcode/refereeStore";
-import type { MatchDoc, Snapshot } from "../types/netcode";
 import { startClientLoop } from "../netcode/clientLoop";
 import { startRefereeLoop } from "../netcode/refereeLoop";
-import { useKeyBinder } from "../game/input/KeyBinder";
-import { sampleKeyboardIntent } from "../utils/input";
 
-const ARENA_WIDTH = 960;
-const ARENA_HEIGHT = 540;
-const PLAYER_WIDTH = 28;
-const PLAYER_HEIGHT = 48;
-const PLAYER_HALF_WIDTH = PLAYER_WIDTH / 2;
-const PLAYER_HALF_HEIGHT = PLAYER_HEIGHT / 2;
+const FALLBACK_KEYS = { left: false, right: false, up: false, jump: false, attack: false, seq: 0 };
 
 const ArenaPage: React.FC = () => {
   const { arenaId } = useParams<{ arenaId: string }>();
@@ -27,16 +22,25 @@ const ArenaPage: React.FC = () => {
   const [arena, setArena] = useState<Arena | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [matchId, setMatchId] = useState<string | null>(null);
-  const [match, setMatch] = useState<MatchDoc | null>(null);
   const [role, setRole] = useState<"referee" | "client" | null>(null);
-  const [latestSnapshot, setLatestSnapshot] = useState<Snapshot | null>(null);
+  const [slot, setSlot] = useState<1 | 2 | null>(null);
+  const [status, setStatus] = useState<MatchStatus>("waiting");
   const [tick, setTick] = useState(0);
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
 
-  const keysRef = useKeyBinder();
-  const matchIdRef = useRef<string | null>(null);
-
+  const binderRef = useRef<ReturnType<typeof createKeyBinder> | null>(null);
   const clientLoopCleanup = useRef<() => void>();
   const refereeLoopCleanup = useRef<() => void>();
+  const matchIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const binder = createKeyBinder();
+    binderRef.current = binder;
+    return () => {
+      binder.dispose();
+      binderRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!arenaId) {
@@ -60,7 +64,7 @@ const ArenaPage: React.FC = () => {
             description: data.description ?? "",
             capacity: data.capacity ?? undefined,
             isActive: Boolean(data.isActive),
-            createdAt: data.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString(),
+            createdAt: data.createdAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
           });
         }
       } catch (err) {
@@ -77,6 +81,15 @@ const ArenaPage: React.FC = () => {
   }, [arenaId]);
 
   useEffect(() => {
+    matchIdRef.current = matchId;
+  }, [matchId]);
+
+  useEffect(() => {
+    setSnapshot(null);
+    setTick(0);
+  }, [matchId]);
+
+  useEffect(() => {
     if (!arenaId || !player) {
       return;
     }
@@ -91,6 +104,8 @@ const ArenaPage: React.FC = () => {
         if (!mounted) return;
         setMatchId(res.matchId);
         setRole(res.role);
+        setSlot(res.slot);
+        setStatus(res.role === "referee" ? "waiting" : "active");
       })
       .catch((err) => {
         console.error(err);
@@ -117,38 +132,22 @@ const ArenaPage: React.FC = () => {
   }, [arenaId, player]);
 
   useEffect(() => {
-    matchIdRef.current = matchId;
-  }, [matchId]);
-
-  useEffect(() => {
     if (!matchId) return;
-    setLatestSnapshot(null);
-    setTick(0);
     const unsubscribe = subscribeMatch(matchId, (doc) => {
-      setMatch(doc);
-      setTick(doc.tick);
+      setStatus(doc.status);
       if (player) {
-        const slot = doc.players.findIndex((p) => p.playerId === player.id);
-        if (slot === 0) {
+        const idx = doc.players.findIndex((p) => p.playerId === player.id);
+        if (idx === 0) {
           setRole("referee");
-        } else if (slot === 1) {
+          setSlot(1);
+        } else if (idx === 1) {
           setRole("client");
-        } else {
-          setRole(null);
+          setSlot(2);
         }
       }
     });
     return unsubscribe;
   }, [matchId, player]);
-
-  const slot = useMemo(() => {
-    if (!match || !player) return null;
-    const idx = match.players.findIndex((p) => p.playerId === player.id);
-    if (idx === -1) return null;
-    return (idx + 1) as 1 | 2;
-  }, [match, player]);
-
-  const getLocalIntent = useCallback(() => sampleKeyboardIntent(keysRef), [keysRef]);
 
   useEffect(() => {
     if (!matchId || !slot || !role) {
@@ -158,15 +157,18 @@ const ArenaPage: React.FC = () => {
     clientLoopCleanup.current?.();
     refereeLoopCleanup.current?.();
 
+    const getLocalIntent = () => {
+      const binder = binderRef.current;
+      return toIntent(binder ? binder.state : FALLBACK_KEYS);
+    };
+
     clientLoopCleanup.current = startClientLoop(matchId, slot, getLocalIntent, (snap) => {
-      setLatestSnapshot(snap);
+      setSnapshot(snap);
       setTick(snap.t);
     });
 
     if (role === "referee") {
-      refereeLoopCleanup.current = startRefereeLoop(matchId, {
-        onTick: (t) => setTick(t),
-      });
+      refereeLoopCleanup.current = startRefereeLoop(matchId);
     } else {
       refereeLoopCleanup.current = undefined;
     }
@@ -177,105 +179,39 @@ const ArenaPage: React.FC = () => {
       clientLoopCleanup.current = undefined;
       refereeLoopCleanup.current = undefined;
     };
-  }, [matchId, slot, role, getLocalIntent]);
+  }, [matchId, slot, role]);
 
   useEffect(() => {
     return () => {
       clientLoopCleanup.current?.();
       refereeLoopCleanup.current?.();
+      binderRef.current?.dispose();
     };
   }, []);
-
-  useEffect(() => {
-    if (role) {
-      return;
-    }
-    clientLoopCleanup.current?.();
-    refereeLoopCleanup.current?.();
-    clientLoopCleanup.current = undefined;
-    refereeLoopCleanup.current = undefined;
-  }, [role]);
-
-  const statusRibbon = (
-    <div
-      style={{
-        background: "#111827",
-        color: "#e5e7eb",
-        padding: "8px 12px",
-        borderRadius: "8px",
-        marginBottom: "16px",
-        fontSize: "14px",
-      }}
-    >
-      Match: {matchId ?? "…"} · Role: {role ?? "–"} · Tick: {tick}
-    </div>
-  );
-
-  const waitingNotice = match && match.status !== "active" ? (
-    <p style={{ color: "#fbbf24", marginBottom: "12px" }}>Waiting for another player…</p>
-  ) : null;
-
-  const renderSnapshot = () => {
-    if (!latestSnapshot) {
-      return <div style={{ color: "#9ca3af" }}>Waiting for referee…</div>;
-    }
-    const p1Name = match?.players[0]?.codename ?? "P1";
-    const p2Name = match?.players[1]?.codename ?? "P2";
-    const p1Top = latestSnapshot.p1.y - PLAYER_HALF_HEIGHT;
-    const p2Top = latestSnapshot.p2.y - PLAYER_HALF_HEIGHT;
-    const p1Left = latestSnapshot.p1.x - PLAYER_HALF_WIDTH;
-    const p2Left = latestSnapshot.p2.x - PLAYER_HALF_WIDTH;
-    return (
-      <>
-        <div
-          style={{
-            position: "absolute",
-            left: `${p1Left}px`,
-            top: `${p1Top}px`,
-            width: `${PLAYER_WIDTH}px`,
-            height: `${PLAYER_HEIGHT}px`,
-            background: slot === 1 ? "#38bdf8" : "#3b82f6",
-            borderRadius: "4px",
-            transition: "transform 0.05s linear",
-          }}
-          title={`${p1Name} HP: ${latestSnapshot.p1.hp}`}
-        />
-        <div
-          style={{
-            position: "absolute",
-            left: `${p2Left}px`,
-            top: `${p2Top}px`,
-            width: `${PLAYER_WIDTH}px`,
-            height: `${PLAYER_HEIGHT}px`,
-            background: slot === 2 ? "#38bdf8" : "#f97316",
-            borderRadius: "4px",
-            transition: "transform 0.05s linear",
-          }}
-          title={`${p2Name} HP: ${latestSnapshot.p2.hp}`}
-        />
-        <div
-          style={{
-            position: "absolute",
-            left: "16px",
-            top: "16px",
-            color: "#e5e7eb",
-            fontSize: "14px",
-            textShadow: "0 1px 2px rgba(0,0,0,0.6)",
-          }}
-        >
-          <div>{p1Name}: {latestSnapshot.p1.hp} HP</div>
-          <div>{p2Name}: {latestSnapshot.p2.hp} HP</div>
-          {latestSnapshot.events?.map((event, idx) => (
-            <div key={idx} style={{ color: "#f87171" }}>{event}</div>
-          ))}
-        </div>
-      </>
-    );
-  };
 
   const handleExit = () => {
     navigate("/");
   };
+
+  const hud = (
+    <div style={{ padding: "8px", fontSize: 12, color: "#9CA3AF" }}>
+      Match: {matchId ?? "…"} · Role: {role ?? "–"} · Tick: {tick} · P1 HP: {snapshot?.p1.hp ?? 100} · P2 HP: {snapshot?.p2.hp ?? 100}
+      {status !== "active" && <span> · Waiting for another player…</span>}
+    </div>
+  );
+
+  const positions = snapshot ? (
+    <div style={{ color: "#E5E7EB", background: "#111827", padding: "12px", borderRadius: "8px" }}>
+      <div>Tick: {snapshot.t}</div>
+      <div>P1 – x: {snapshot.p1.x.toFixed(1)}, y: {snapshot.p1.y.toFixed(1)}, vx: {snapshot.p1.vx.toFixed(1)}, vy: {snapshot.p1.vy.toFixed(1)}, HP: {snapshot.p1.hp}</div>
+      <div>P2 – x: {snapshot.p2.x.toFixed(1)}, y: {snapshot.p2.y.toFixed(1)}, vx: {snapshot.p2.vx.toFixed(1)}, vy: {snapshot.p2.vy.toFixed(1)}, HP: {snapshot.p2.hp}</div>
+      {snapshot.events?.length ? (
+        <div style={{ marginTop: "8px", color: "#F87171" }}>Events: {snapshot.events.join(", ")}</div>
+      ) : null}
+    </div>
+  ) : (
+    <div style={{ color: "#9CA3AF" }}>Waiting for referee…</div>
+  );
 
   return (
     <main style={{ minHeight: "100vh", background: "#0f1115", color: "#e5e7eb" }}>
@@ -301,8 +237,7 @@ const ArenaPage: React.FC = () => {
           </button>
         </div>
         {arena?.description ? <p style={{ color: "#9ca3af" }}>{arena.description}</p> : null}
-        {statusRibbon}
-        {waitingNotice}
+        {hud}
         {!player ? (
           <div style={{ color: "#f87171", marginBottom: "12px" }}>
             Login to control a fighter.
@@ -311,30 +246,7 @@ const ArenaPage: React.FC = () => {
         {error ? (
           <div style={{ color: "#f87171" }}>{error}</div>
         ) : null}
-        <div
-          style={{
-            position: "relative",
-            width: `${ARENA_WIDTH}px`,
-            height: `${ARENA_HEIGHT}px`,
-            background: "#111827",
-            borderRadius: "12px",
-            border: "1px solid #1f2937",
-            overflow: "hidden",
-            marginTop: "16px",
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              bottom: 0,
-              width: "100%",
-              height: "40px",
-              background: "#1f2937",
-            }}
-          />
-          {renderSnapshot()}
-        </div>
+        <div style={{ marginTop: "16px" }}>{positions}</div>
       </div>
     </main>
   );
