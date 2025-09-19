@@ -5,7 +5,8 @@ const FIREBALL_RADIUS = 6;
 function ensureCircleTexture(scene: Phaser.Scene, key: string, radius: number) {
   if (scene.textures.exists(key)) return;
   const diameter = radius * 2;
-  const graphics = scene.make.graphics({ x: 0, y: 0, add: false });
+  const graphics = scene.add.graphics({ x: 0, y: 0 });
+  graphics.setVisible(false);
   graphics.fillStyle(0xffffff, 1);
   graphics.fillCircle(radius, radius, radius);
   graphics.generateTexture(key, diameter, diameter);
