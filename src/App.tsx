@@ -1,28 +1,25 @@
-import { Navigate, Route, Routes } from "react-router-dom";
-import AdminPage from "./pages/AdminPage";
+cat > src/App.tsx <<'TS'
+import React from "react";
+import { Routes, Route, Navigate } from "react-router-dom";
 import HomePage from "./pages/HomePage";
+import AdminPage from "./pages/AdminPage";
 import ArenaPage from "./pages/ArenaPage";
 import TrainingPage from "./pages/TrainingPage";
-import DebugFirebaseExports from "./pages/DebugFirebaseExports";
-import { AuthProvider } from "./context/AuthContext";
 
-function App() {
+export default function App() {
   return (
-    <AuthProvider>
-      <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/admin" element={<AdminPage />} />
-        <Route path="/arena" element={<ArenaPage />} />
-        <Route path="/arena/:arenaId" element={<ArenaPage />} />
-        <Route path="/training" element={<TrainingPage />} />
-        <Route path="/debug/firebase-exports" element={<DebugFirebaseExports />} />
-        {/* legacy fallbacks */}
-        <Route path="/index.html" element={<Navigate to="/" replace />} />
-        <Route path="/admin.html" element={<Navigate to="/admin" replace />} />
-        <Route path="/training.html" element={<Navigate to="/training" replace />} />
-      </Routes>
-    </AuthProvider>
+    <Routes>
+      <Route path="/" element={<HomePage />} />
+      {/* Old links to /index should still work */}
+      <Route path="/index" element={<Navigate to="/" replace />} />
+      {/* Admin SPA route (separate from legacy /admin.html) */}
+      <Route path="/admin" element={<AdminPage />} />
+      <Route path="/arena/:arenaId" element={<ArenaPage />} />
+      <Route path="/training" element={<TrainingPage />} />
+      <Route path="*" element={<div style={{ padding: 24, color: "#e5e7eb" }}>
+        Route not found. Try <a href="/">home</a>.
+      </div>} />
+    </Routes>
   );
 }
-
-export default App;
+TS
