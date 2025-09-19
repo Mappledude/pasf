@@ -125,4 +125,112 @@ export const createPlayer = async (input: CreatePlayerInput) => {
 export const findPlayerByPasscode = async (passcode: string) => {
   // Fast path: mapping collection
   const mapSnap = await getDoc(doc(db, "passcodes", passcode));
-  if
+  if (mapSnap.exists()) {
+    const playerId = (mapSnap.data() as any).playerId as string;
+    const p = await getDoc(doc(db, "players", playerId));
+    if (p.exists()) {
+      const d = p.data() as any;
+      const createdAt = d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString();
+      const lastActiveAt = d.lastActiveAt?.toDate?.().toISOString?.();
+      return { id: p.id, codename: d.codename, preferredArenaId: d.preferredArenaId ?? undefined, createdAt, lastActiveAt } as PlayerProfile;
+    }
+  }
+  // Fallback: query by passcode (older shape)
+  const qy = query(collection(db, "players"), where("passcode", "==", passcode));
+  const res = await getDocs(qy);
+  if (!res.empty) {
+    const s = res.docs[0];
+    const d = s.data() as any;
+    const createdAt = d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString();
+    const lastActiveAt = d.lastActiveAt?.toDate?.().toISOString?.();
+    return { id: s.id, codename: d.codename, preferredArenaId: d.preferredArenaId ?? undefined, createdAt, lastActiveAt } as PlayerProfile;
+  }
+  return undefined;
+};
+
+export const updatePlayerActivity = async (playerId: string) => {
+  await updateDoc(doc(db, "players", playerId), { lastActiveAt: serverTimestamp() });
+};
+
+// === ARENAS ===
+export interface CreateArenaInput { name: string; description?: string; capacity?: number; }
+
+export const createArena = async (input: CreateArenaInput) => {
+  const now = serverTimestamp();
+  const aRef = await addDoc(collection(db, "arenas"), {
+    name: input.name,
+    description: input.description ?? "",
+    capacity: input.capacity ?? null,
+    isActive: true,
+    createdAt: now,
+  });
+  return aRef.id;
+};
+
+export const listArenas = async (): Promise<Arena[]> => {
+  const snap = await getDocs(collection(db, "arenas"));
+  return snap.docs.map((s) => {
+    const d = s.data() as any;
+    const createdAt = d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString();
+    return {
+      id: s.id,
+      name: d.name,
+      description: d.description ?? undefined,
+      capacity: d.capacity ?? undefined,
+      isActive: !!d.isActive,
+      createdAt,
+    } as Arena;
+  });
+};
+
+// === LEADERBOARD ===
+export interface UpsertLeaderboardInput { playerId: string; wins?: number; losses?: number; streak?: number; }
+
+export const upsertLeaderboardEntry = async (input: UpsertLeaderboardInput) => {
+  const ref = doc(db, "leaderboard", input.playerId);
+  const snap = await getDoc(ref);
+  const now = serverTimestamp();
+  if (!snap.exists()) {
+    await setDoc(ref, {
+      playerId: input.playerId,
+      wins: input.wins ?? 0,
+      losses: input.losses ?? 0,
+      streak: input.streak ?? 0,
+      updatedAt: now,
+    });
+    return;
+  }
+  const cur = snap.data() as any;
+  await updateDoc(ref, {
+    wins: input.wins ?? cur.wins ?? 0,
+    losses: input.losses ?? cur.losses ?? 0,
+    streak: input.streak ?? cur.streak ?? 0,
+    updatedAt: now,
+  });
+};
+
+export const listLeaderboard = async (): Promise<LeaderboardEntry[]> => {
+  const snap = await getDocs(collection(db, "leaderboard"));
+  return Promise.all(
+    snap.docs.map(async (s) => {
+      const d = s.data() as any;
+      let playerCodename: string | undefined;
+      try {
+        const p = await getDoc(doc(db, "players", d.playerId));
+        playerCodename = p.data()?.codename;
+      } catch {}
+      const updatedAt = d.updatedAt?.toDate?.().toISOString?.() ?? new Date().toISOString();
+      return {
+        id: s.id,
+        playerId: d.playerId,
+        playerCodename,
+        wins: d.wins ?? 0,
+        losses: d.losses ?? 0,
+        streak: d.streak ?? 0,
+        updatedAt,
+      } as LeaderboardEntry;
+    })
+  );
+};
+
+// === END ===
