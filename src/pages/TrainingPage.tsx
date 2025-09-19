@@ -1,31 +1,16 @@
 import React, { useEffect, useRef } from "react";
 import Phaser from "phaser";
+import { Link } from "react-router-dom";
+import { makeGame } from "../game/phaserGame";
+import TrainingScene from "../game/training/TrainingScene";
 
 const TrainingPage: React.FC = () => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
 
   useEffect(() => {
-    if (!containerRef.current || gameRef.current) return;
-
-    class TrainingScene extends Phaser.Scene {
-      constructor() {
-        super("Training");
-      }
-      create() {
-        console.info("[training] scene.create()");
-        this.cameras.main.setBackgroundColor(0x0f1115);
-        this.add
-          .text(480, 60, "Training Scene Ready", {
-            fontFamily: "system-ui, Arial",
-            fontSize: "24px",
-            color: "#e6e6e6",
-          })
-          .setOrigin(0.5, 0.5);
-
-        const g = this.add.graphics();
-        g.fillStyle(0x86efac).fillCircle(480, 270, 12);
-      }
+    if (!containerRef.current) {
+      return;
     }
 
     const config: Phaser.Types.Core.GameConfig = {
@@ -34,37 +19,29 @@ const TrainingPage: React.FC = () => {
       height: 540,
       parent: containerRef.current,
       backgroundColor: "#0f1115",
+      physics: { default: "arcade", arcade: { gravity: { y: 900 }, debug: false } },
       scene: [TrainingScene],
     };
 
-    gameRef.current = new Phaser.Game(config);
+    console.info("[TrainingPage] booting Phaser");
+    gameRef.current = makeGame(config);
 
     return () => {
-      if (gameRef.current) {
-        gameRef.current.destroy(true);
-        gameRef.current = null;
-      }
+      console.info("[TrainingPage] destroying Phaser");
+      gameRef.current?.destroy(true);
+      gameRef.current = null;
     };
   }, []);
 
   return (
-    <div style={{ padding: 16 }}>
-      <div style={{ marginBottom: 12 }}>
-        <a
-          href="/"
-          style={{
-            padding: "6px 10px",
-            background: "#1f2937",
-            border: "1px solid #374151",
-            borderRadius: 6,
-            color: "#e5e7eb",
-            textDecoration: "none",
-          }}
-        >
+    <div style={{ minHeight: "100vh", background: "#0f1115", color: "#e6e6e6" }}>
+      <div style={{ padding: "12px" }}>
+        <Link to="/" style={{ color: "#7dd3fc", textDecoration: "none" }}>
           ← Lobby
-        </a>
+        </Link>
+        <h2 style={{ margin: "8px 0 12px 0" }}>Training</h2>
       </div>
-      <div ref={containerRef} />
+      <div ref={containerRef} style={{ display: "flex", justifyContent: "center" }} />
     </div>
   );
 };
