@@ -20,9 +20,12 @@
     </div>
     <div id="game"></div>
 
-    <!-- Load Phaser UMD from CDN so we don't rely on Vite modules -->
+    <script>
+      console.info("[training.html] page loaded");
+    </script>
+    <!-- Phaser UMD from CDN -->
     <script src="https://unpkg.com/phaser@3/dist/phaser.js"></script>
-    <!-- Our standalone script (no imports) -->
-    <script src="/public/training.js"></script>
+    <!-- IMPORTANT: public assets are served from root; do NOT prefix with /public -->
+    <script src="/training.js"></script>
   </body>
 </html>
