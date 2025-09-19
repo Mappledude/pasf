@@ -7,7 +7,7 @@ export interface BossProfile {
 export interface PlayerProfile {
   id: string;
   codename: string;
-  passcode: string;
+  passcode?: string;
   preferredArenaId?: string;
   createdAt: string;
   lastActiveAt?: string;
@@ -17,7 +17,7 @@ export interface Arena {
   id: string;
   name: string;
   description?: string;
-  capacity?: number;
+  capacity?: number | null;
   isActive: boolean;
   createdAt: string;
 }
