@@ -1,28 +1,41 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // TODO tighten security before production release.
-    match /{document=**} {
-      allow read, write: if request.auth != null;
-    }
 
-    match /players/{playerId} {
-      allow read: if true;
-      allow create, update: if request.auth != null;
-    }
+    // === DEV RULES (permissive) ===
+    // Anyone with an anonymous session can read/write the core game data.
+    // We will tighten with Cloud Functions + admin claims later.
 
+    // Arenas and per-arena presence (who's inside)
     match /arenas/{arenaId} {
-      allow read: if true;
-      allow write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null; // TEMP for dev
+      match /presence/{playerId} {
+        allow read, write: if request.auth != null; // TEMP for dev
+      }
     }
 
+    // Players (name, stats, settings)
+    match /players/{playerId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null; // TEMP for dev; Boss-only later
+    }
+
+    // Passcode mapping (doc id == passcode)
+    match /passcodes/{passcode} {
+      allow read, write: if request.auth != null; // TEMP for dev
+    }
+
+    // Optional: leaderboard mirror (if you create it later)
     match /leaderboard/{playerId} {
-      allow read: if true;
-      allow write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null; // TEMP for dev
     }
 
-    match /boss/{bossId} {
-      allow read, write: if request.auth != null;
+    // Read-only metadata
+    match /meta/{doc} {
+      allow read: if true;
+      allow write: if false;
     }
   }
 }

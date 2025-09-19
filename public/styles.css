@@ -1,0 +1,110 @@
+:root {
+  font-family: "Roboto", Arial, sans-serif;
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+body {
+  margin: 0;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-width: 960px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+h1,
+ h2,
+ h3 {
+  margin: 0;
+}
+
+form,
+section,
+main {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);
+}
+
+label {
+  font-weight: 600;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+input,
+button,
+select {
+  font-size: 1.1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  border: 2px solid #cbd5f5;
+  margin-bottom: 0.75rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+button {
+  cursor: pointer;
+  font-weight: 700;
+  background-color: #2563eb;
+  color: white;
+  border: none;
+  transition: background-color 0.2s ease, transform 0.1s ease;
+}
+
+button:hover {
+  background-color: #1d4ed8;
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+.actions {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.card-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.card {
+  background: #eff6ff;
+  border-radius: 10px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.alert {
+  padding: 1rem;
+  background-color: #fef3c7;
+  border: 1px solid #f59e0b;
+  border-radius: 10px;
+}
+
+.notice {
+  font-size: 0.9rem;
+  color: #475569;
+}
+
+.large-button {
+  font-size: 1.25rem;
+  padding: 1rem 1.5rem;
+}
