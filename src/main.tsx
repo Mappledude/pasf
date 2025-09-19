@@ -16,6 +16,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/arena" element={<ArenaPage />} />
           <Route path="/arena/:arenaId" element={<ArenaPage />} />
           <Route path="/training" element={<TrainingPage />} />
           <Route path="/debug/firebase-exports" element={<DebugFirebaseExports />} />
