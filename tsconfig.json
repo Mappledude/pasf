@@ -1,19 +1,18 @@
 {
   "compilerOptions": {
     "target": "ES2020",
+    "useDefineForClassFields": true,
     "module": "ESNext",
-    "moduleResolution": "Node",
-    "lib": ["ES2020", "DOM"],
-    "allowJs": true,
-    "checkJs": true,
-    "strict": true,
-    "esModuleInterop": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "Bundler",
     "resolveJsonModule": true,
+    "isolatedModules": true,
     "noEmit": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
     "types": ["vite/client"]
   },
-  "include": ["src/**/*", "public/**/*", "vite.config.ts"],
+  "include": ["src", "public", "vite.config.ts"],
   "exclude": ["node_modules"]
 }
