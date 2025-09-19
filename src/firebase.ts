@@ -20,15 +20,7 @@ import {
   query,
   where,
 } from "firebase/firestore";
-import type {
-  Arena,
-  BossProfile,
-  LeaderboardEntry,
-  PlayerProfile,
-} from "./types/models";
-export type { Arena, BossProfile, LeaderboardEntry, PlayerProfile };
 
-// --- Firebase config (keep as given) ---
 export const firebaseConfig = {
   apiKey: "AIzaSyAfqKN-zpIpwblhcafgKEneUnAfcTUV0-A",
   authDomain: "stickfightpa.firebaseapp.com",
@@ -38,12 +30,11 @@ export const firebaseConfig = {
   appId: "1:116175306919:web:2e483bbc453498e8f3db82",
 };
 
-// --- Core singletons ---
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-// --- Dev emulator hook (no-op in prod) ---
+// Dev emulator hook (no-op unless explicitly enabled)
 export const maybeConnectEmulators = () => {
   if (import.meta.env?.DEV && import.meta.env?.VITE_USE_FIREBASE_EMULATORS === "true") {
     try {
@@ -56,7 +47,6 @@ export const maybeConnectEmulators = () => {
   }
 };
 
-// --- Auth helpers expected by the app ---
 export async function ensureAnonAuth(): Promise<User> {
   if (!auth.currentUser) {
     const cred = await signInAnonymously(auth);
@@ -72,7 +62,35 @@ export const signInAnonymouslyWithTracking = async (): Promise<User> => {
   return cred.user;
 };
 
-// --- Boss profile (simple singleton doc) ---
+type ISODate = string;
+export interface BossProfile { id: string; displayName: string; createdAt: ISODate; }
+export interface PlayerProfile {
+  id: string;
+  codename: string;
+  passcode?: string;
+  preferredArenaId?: string;
+  createdAt: ISODate;
+  lastActiveAt?: ISODate;
+}
+export interface Arena {
+  id: string;
+  name: string;
+  description?: string;
+  capacity?: number | null;
+  isActive: boolean;
+  createdAt: ISODate;
+}
+export interface LeaderboardEntry {
+  id: string;
+  playerId: string;
+  playerCodename?: string;
+  wins: number;
+  losses: number;
+  streak: number;
+  updatedAt: ISODate;
+}
+
+// Boss profile
 export const ensureBossProfile = async (displayName: string) => {
   const ref = doc(db, "boss", "primary");
   const snap = await getDoc(ref);
@@ -84,7 +102,7 @@ export const ensureBossProfile = async (displayName: string) => {
   return again.data() as BossProfile | undefined;
 };
 
-// --- Players & passcodes ---
+// Players & passcodes
 export interface CreatePlayerInput { codename: string; passcode: string; preferredArenaId?: string; }
 
 export const createPlayer = async (input: CreatePlayerInput) => {
@@ -95,13 +113,11 @@ export const createPlayer = async (input: CreatePlayerInput) => {
     preferredArenaId: input.preferredArenaId ?? null,
     createdAt: now,
   });
-  // map passcode → playerId for O(1) lookup
   await setDoc(doc(db, "passcodes", input.passcode), { playerId: pRef.id, createdAt: now });
   return pRef.id;
 };
 
 export const findPlayerByPasscode = async (passcode: string) => {
-  // Fast path: dedicated mapping doc
   const mapSnap = await getDoc(doc(db, "passcodes", passcode));
   if (mapSnap.exists()) {
     const playerId = (mapSnap.data() as any).playerId as string;
@@ -110,17 +126,9 @@ export const findPlayerByPasscode = async (passcode: string) => {
       const d = p.data() as any;
       const createdAt = d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString();
       const lastActiveAt = d.lastActiveAt?.toDate?.().toISOString?.();
-      return {
-        id: p.id,
-        codename: d.codename,
-        passcode,
-        preferredArenaId: d.preferredArenaId ?? undefined,
-        createdAt,
-        lastActiveAt,
-      } satisfies PlayerProfile;
+      return { id: p.id, codename: d.codename, preferredArenaId: d.preferredArenaId ?? undefined, createdAt, lastActiveAt } as PlayerProfile;
     }
   }
-  // Fallback: query (older data shape)
   const qy = query(collection(db, "players"), where("passcode", "==", passcode));
   const res = await getDocs(qy);
   if (!res.empty) {
@@ -128,14 +136,7 @@ export const findPlayerByPasscode = async (passcode: string) => {
     const d = s.data() as any;
     const createdAt = d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString();
     const lastActiveAt = d.lastActiveAt?.toDate?.().toISOString?.();
-    return {
-      id: s.id,
-      codename: d.codename,
-      passcode: d.passcode ?? passcode,
-      preferredArenaId: d.preferredArenaId ?? undefined,
-      createdAt,
-      lastActiveAt,
-    } satisfies PlayerProfile;
+    return { id: s.id, codename: d.codename, preferredArenaId: d.preferredArenaId ?? undefined, createdAt, lastActiveAt } as PlayerProfile;
   }
   return undefined;
 };
@@ -144,7 +145,7 @@ export const updatePlayerActivity = async (playerId: string) => {
   await updateDoc(doc(db, "players", playerId), { lastActiveAt: serverTimestamp() });
 };
 
-// --- Arenas ---
+// Arenas
 export interface CreateArenaInput { name: string; description?: string; capacity?: number; }
 
 export const createArena = async (input: CreateArenaInput) => {
@@ -175,7 +176,7 @@ export const listArenas = async (): Promise<Arena[]> => {
   });
 };
 
-// --- Leaderboard ---
+// Leaderboard
 export interface UpsertLeaderboardInput { playerId: string; wins?: number; losses?: number; streak?: number; }
 
 export const upsertLeaderboardEntry = async (input: UpsertLeaderboardInput) => {
@@ -225,4 +226,4 @@ export const listLeaderboard = async (): Promise<LeaderboardEntry[]> => {
   );
 };
 
-// --- END OF FILE ---
+// END
