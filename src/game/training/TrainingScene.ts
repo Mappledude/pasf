@@ -1,73 +1,117 @@
 import Phaser from "phaser";
+import { Dummy } from "../entities/Dummy";
+import { Player } from "../entities/Player";
+import { HUD } from "../ui/HUD";
+
+const WORLD_WIDTH = 960;
+const WORLD_HEIGHT = 540;
+const GROUND_HEIGHT = 40;
+const DAMAGE_PER_HIT = 10;
 
 export default class TrainingScene extends Phaser.Scene {
-  private player!: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
-  private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
-  private jumpKey!: Phaser.Input.Keyboard.Key;
-  private hp = 100;
-  private hpText!: Phaser.GameObjects.Text;
+  private player?: Player;
+  private dummy?: Dummy;
+  private hud?: HUD;
+  private ground?: Phaser.GameObjects.Rectangle;
+  private koText?: Phaser.GameObjects.Text;
+  private koTween?: Phaser.Tweens.Tween;
 
   constructor() {
     super("Training");
   }
 
-  preload() {
-    const g = this.make.graphics({ x: 0, y: 0, add: false });
-    g.fillStyle(0xffffff, 1).fillRect(0, 0, 24, 24);
-    g.generateTexture("playerBox", 24, 24);
-    g.destroy();
-  }
-
   create() {
-    console.info("[TrainingScene] create()");
     this.cameras.main.setBackgroundColor(0x0f1115);
+    this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-    this.physics.world.setBounds(0, 0, 960, 540);
+    this.createGround();
 
-    this.player = this.physics.add
-      .sprite(480, 300, "playerBox")
-      .setBounce(0)
-      .setCollideWorldBounds(true);
+    this.player = new Player(this, 240, WORLD_HEIGHT - GROUND_HEIGHT - 60);
+    this.dummy = new Dummy(this, 640, WORLD_HEIGHT - GROUND_HEIGHT - 60);
 
-    this.cursors = this.input.keyboard!.createCursorKeys();
-    this.jumpKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.physics.add.collider(this.player.sprite, this.ground!);
+    this.physics.add.collider(this.player.sprite, this.dummy.sprite);
+    this.physics.add.collider(this.dummy.sprite, this.ground!);
 
-    this.add.text(16, 12, "Training Scene Ready", {
-      fontFamily: "system-ui, Arial",
-      fontSize: "18px",
-      color: "#e6e6e6",
-    });
+    this.physics.add.overlap(
+      this.player.attackHitbox,
+      this.dummy.sprite,
+      this.handleAttackOverlap,
+      undefined,
+      this,
+    );
 
-    this.hpText = this.add.text(16, 36, `HP: ${this.hp}`, {
-      fontFamily: "system-ui, Arial",
-      fontSize: "16px",
-      color: "#86efac",
-    });
+    this.hud = new HUD(this, this.player, this.dummy);
+    this.createKoText();
 
-    this.time.addEvent({
-      delay: 1000,
-      loop: true,
-      callback: () => {
-        this.hp = Math.max(0, this.hp - 1);
-        this.hpText.setText(`HP: ${this.hp}`);
-      },
+    this.dummy.on("dummy:ko", this.flashKo, this);
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.handleShutdown, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.handleShutdown, this);
+  }
+
+  update(_: number, delta: number) {
+    const dt = delta / 1000;
+    this.player?.update(dt);
+    this.hud?.update();
+  }
+
+  private handleAttackOverlap = () => {
+    if (!this.player || !this.dummy) return;
+    if (!this.player.isAttackActive()) return;
+    if (!this.player.registerHit()) return;
+
+    this.dummy.receiveDamage(DAMAGE_PER_HIT);
+  };
+
+  private createGround() {
+    const groundY = WORLD_HEIGHT - GROUND_HEIGHT / 2;
+    this.ground = this.add.rectangle(WORLD_WIDTH / 2, groundY, WORLD_WIDTH, GROUND_HEIGHT, 0x1f2937);
+    this.physics.add.existing(this.ground, true);
+    const body = this.ground.body as Phaser.Physics.Arcade.StaticBody;
+    body.updateFromGameObject();
+  }
+
+  private createKoText() {
+    this.koText = this.add
+      .text(WORLD_WIDTH / 2, 140, "KO!", {
+        fontFamily: "system-ui, sans-serif",
+        fontSize: "48px",
+        color: "#f97316",
+        stroke: "#0f1115",
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5)
+      .setAlpha(0);
+    this.koText.setScrollFactor(0);
+  }
+
+  private flashKo() {
+    if (!this.koText) return;
+    this.koTween?.stop();
+    this.koText.setAlpha(1);
+    this.koText.setScale(1);
+    this.koTween = this.tweens.add({
+      targets: this.koText,
+      alpha: 0,
+      scale: 1.3,
+      duration: 400,
+      ease: "Quad.easeOut",
     });
   }
 
-  update() {
-    const speed = 220;
-
-    if (this.cursors.left?.isDown) {
-      this.player.setVelocityX(-speed);
-    } else if (this.cursors.right?.isDown) {
-      this.player.setVelocityX(speed);
-    } else {
-      this.player.setVelocityX(0);
-    }
-
-    const onFloor = this.player.body.blocked.down || this.player.body.touching.down;
-    if (Phaser.Input.Keyboard.JustDown(this.jumpKey) && onFloor) {
-      this.player.setVelocityY(-360);
-    }
+  private handleShutdown() {
+    this.koTween?.stop();
+    this.player?.destroy();
+    this.player = undefined;
+    this.dummy?.off("dummy:ko", this.flashKo, this);
+    this.dummy?.destroy();
+    this.dummy = undefined;
+    this.hud?.destroy();
+    this.hud = undefined;
+    this.ground?.destroy();
+    this.ground = undefined;
+    this.koText?.destroy();
+    this.koText = undefined;
   }
 }

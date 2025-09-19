@@ -19,7 +19,7 @@ const TrainingPage: React.FC = () => {
       height: 540,
       parent: containerRef.current,
       backgroundColor: "#0f1115",
-      physics: { default: "arcade", arcade: { gravity: { y: 900 }, debug: false } },
+      physics: { default: "arcade", arcade: { gravity: { x: 0, y: 900 }, debug: false } },
       scene: [TrainingScene],
     };
 
