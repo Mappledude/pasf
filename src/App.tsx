@@ -3,6 +3,7 @@ import { AdminPage } from "./pages/AdminPage";
 import { HomePage } from "./pages/HomePage";
 import { ArenaPage } from "./pages/ArenaPage";
 import TrainingPage from "./pages/TrainingPage";
+import DebugFirebaseExports from "./pages/DebugFirebaseExports";
 import { AuthProvider } from "./context/AuthContext";
 
 function App() {
@@ -13,6 +14,7 @@ function App() {
         <Route path="/admin" element={<AdminPage />} />
         <Route path="/arena/:arenaId" element={<ArenaPage />} />
         <Route path="/training" element={<TrainingPage />} />
+        <Route path="/debug/firebase-exports" element={<DebugFirebaseExports />} />
       </Routes>
     </AuthProvider>
   );
