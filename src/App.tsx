@@ -10,9 +10,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
-      {/* Old links to /index should still work */}
       <Route path="/index" element={<Navigate to="/" replace />} />
-      {/* Admin SPA route (separate from legacy /admin.html) */}
       <Route path="/admin" element={<AdminPage />} />
       <Route path="/arena/:arenaId" element={<ArenaPage />} />
       <Route path="/training" element={<TrainingPage />} />
