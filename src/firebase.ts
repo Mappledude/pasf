@@ -1,6 +1,3 @@
-// src/firebase.ts
-// Firebase bootstrap + helpers used across React pages/contexts
-
 import { initializeApp } from "firebase/app";
 import {
   getAuth,
@@ -24,7 +21,6 @@ import {
   where
 } from "firebase/firestore";
 
-// ---- Config (stickfightpa) ----
 const firebaseConfig = {
   apiKey: "AIzaSyAfqKN-zpIpwblhcafgKEneUnAfcTUV0-A",
   authDomain: "stickfightpa.firebaseapp.com",
@@ -34,12 +30,11 @@ const firebaseConfig = {
   appId: "1:116175306919:web:2e483bbc453498e8f3db82"
 };
 
-// ---- App singletons ----
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-// ---- Optional emulator hook (used in dev by some pages) ----
+// Optional emulator hook (only if VITE_USE_FIREBASE_EMULATORS=true)
 export const maybeConnectEmulators = () => {
   if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATORS === "true") {
     try {
@@ -52,7 +47,7 @@ export const maybeConnectEmulators = () => {
   }
 };
 
-// ---- Auth helpers ----
+// ---- Auth helpers
 export async function ensureAnonAuth(): Promise<User> {
   if (!auth.currentUser) {
     const cred = await signInAnonymously(auth);
@@ -60,76 +55,44 @@ export async function ensureAnonAuth(): Promise<User> {
   }
   return auth.currentUser!;
 }
-
 export const signInAnonymouslyWithTracking = async () => {
   const cred = await signInAnonymously(auth);
   return cred.user;
 };
-
 export function onAuth(cb: (uid: string | null) => void): void {
   onAuthStateChanged(auth, (u) => cb(u?.uid ?? null));
 }
 
-// ---- Types (lightweight) ----
+// ---- Lightweight types
 type ISODate = string;
-
-export interface BossProfile {
-  id: string;
-  displayName: string;
-  createdAt: ISODate;
-}
-
+export interface BossProfile { id: string; displayName: string; createdAt: ISODate; }
 export interface PlayerProfile {
-  id: string;
-  codename: string;
-  passcode?: string;
-  preferredArenaId?: string;
-  createdAt: ISODate;
-  lastActiveAt?: ISODate;
+  id: string; codename: string; passcode?: string;
+  preferredArenaId?: string; createdAt: ISODate; lastActiveAt?: ISODate;
 }
-
 export interface Arena {
-  id: string;
-  name: string;
-  description?: string;
-  capacity?: number | null;
-  isActive: boolean;
-  createdAt: ISODate;
+  id: string; name: string; description?: string; capacity?: number | null;
+  isActive: boolean; createdAt: ISODate;
 }
-
 export interface LeaderboardEntry {
-  id: string;
-  playerId: string;
-  playerCodename?: string;
-  wins: number;
-  losses: number;
-  streak: number;
-  updatedAt: ISODate;
+  id: string; playerId: string; playerCodename?: string;
+  wins: number; losses: number; streak: number; updatedAt: ISODate;
 }
 
-// ---- Boss profile (placeholder) ----
+// ---- Boss profile (placeholder)
 export const ensureBossProfile = async (displayName: string) => {
   const ref = doc(db, "boss", "primary");
   const snap = await getDoc(ref);
   if (!snap.exists()) {
-    const profile: BossProfile = {
-      id: "primary",
-      displayName,
-      createdAt: new Date().toISOString()
-    };
+    const profile: BossProfile = { id: "primary", displayName, createdAt: new Date().toISOString() };
     await setDoc(ref, profile);
   }
   const again = await getDoc(ref);
   return again.data() as BossProfile | undefined;
 };
 
-// ---- Players ----
-export interface CreatePlayerInput {
-  codename: string;
-  passcode: string;
-  preferredArenaId?: string;
-}
-
+// ---- Players
+export interface CreatePlayerInput { codename: string; passcode: string; preferredArenaId?: string; }
 export const createPlayer = async (input: CreatePlayerInput) => {
   const playersRef = collection(db, "players");
   const now = serverTimestamp();
@@ -139,11 +102,7 @@ export const createPlayer = async (input: CreatePlayerInput) => {
     preferredArenaId: input.preferredArenaId ?? null,
     createdAt: now
   });
-  // mapping for O(1) lookup
-  await setDoc(doc(db, "passcodes", input.passcode), {
-    playerId: docRef.id,
-    createdAt: now
-  });
+  await setDoc(doc(db, "passcodes", input.passcode), { playerId: docRef.id, createdAt: now });
   return docRef.id;
 };
 
@@ -167,8 +126,7 @@ export const findPlayerByPasscode = async (passcode: string) => {
   const q = query(collection(db, "players"), where("passcode", "==", passcode));
   const res = await getDocs(q);
   if (!res.empty) {
-    const docSnap = res.docs[0];
-    const d = docSnap.data() as any;
+    const docSnap = res.docs[0]; const d = docSnap.data() as any;
     const profile: PlayerProfile = {
       id: docSnap.id,
       codename: d.codename,
@@ -186,13 +144,8 @@ export const updatePlayerActivity = async (playerId: string) => {
   await updateDoc(ref, { lastActiveAt: serverTimestamp() });
 };
 
-// ---- Arenas ----
-export interface CreateArenaInput {
-  name: string;
-  description?: string;
-  capacity?: number;
-}
-
+// ---- Arenas
+export interface CreateArenaInput { name: string; description?: string; capacity?: number; }
 export const createArena = async (input: CreateArenaInput) => {
   const arenasRef = collection(db, "arenas");
   const now = serverTimestamp();
@@ -205,43 +158,30 @@ export const createArena = async (input: CreateArenaInput) => {
   });
   return docRef.id;
 };
-
 export const listArenas = async () => {
   const arenasRef = collection(db, "arenas");
   const snapshot = await getDocs(arenasRef);
   const arenas: Arena[] = snapshot.docs.map((s) => {
     const d = s.data() as any;
     return {
-      id: s.id,
-      name: d.name,
-      description: d.description ?? undefined,
-      capacity: d.capacity ?? undefined,
-      isActive: Boolean(d.isActive),
+      id: s.id, name: d.name, description: d.description ?? undefined,
+      capacity: d.capacity ?? undefined, isActive: Boolean(d.isActive),
       createdAt: d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString()
     };
   });
   return arenas;
 };
 
-// ---- Leaderboard ----
-export interface UpsertLeaderboardInput {
-  playerId: string;
-  wins?: number;
-  losses?: number;
-  streak?: number;
-}
-
+// ---- Leaderboard
+export interface UpsertLeaderboardInput { playerId: string; wins?: number; losses?: number; streak?: number; }
 export const upsertLeaderboardEntry = async (input: UpsertLeaderboardInput) => {
   const ref = doc(db, "leaderboard", input.playerId);
   const snap = await getDoc(ref);
   const now = serverTimestamp();
   if (!snap.exists()) {
     await setDoc(ref, {
-      playerId: input.playerId,
-      wins: input.wins ?? 0,
-      losses: input.losses ?? 0,
-      streak: input.streak ?? 0,
-      updatedAt: now
+      playerId: input.playerId, wins: input.wins ?? 0, losses: input.losses ?? 0,
+      streak: input.streak ?? 0, updatedAt: now
     });
     return;
   }
@@ -253,24 +193,16 @@ export const upsertLeaderboardEntry = async (input: UpsertLeaderboardInput) => {
     updatedAt: now
   });
 };
-
 export const listLeaderboard = async () => {
   const snapshot = await getDocs(collection(db, "leaderboard"));
   const entries: LeaderboardEntry[] = await Promise.all(
     snapshot.docs.map(async (s) => {
       const d = s.data() as any;
       let playerCodename: string | undefined;
-      try {
-        const p = await getDoc(doc(db, "players", d.playerId));
-        playerCodename = p.data()?.codename;
-      } catch {}
+      try { const p = await getDoc(doc(db, "players", d.playerId)); playerCodename = p.data()?.codename; } catch {}
       return {
-        id: s.id,
-        playerId: d.playerId,
-        playerCodename,
-        wins: d.wins ?? 0,
-        losses: d.losses ?? 0,
-        streak: d.streak ?? 0,
+        id: s.id, playerId: d.playerId, playerCodename,
+        wins: d.wins ?? 0, losses: d.losses ?? 0, streak: d.streak ?? 0,
         updatedAt: d.updatedAt?.toDate?.().toISOString?.() ?? new Date().toISOString()
       };
     })

@@ -3,7 +3,7 @@
 Minimal Firebase + Vite TypeScript scaffold with:
 - Anonymous Auth
 - Firestore data model (players, passcodes, arenas, presence)
-- Basic pages: `/index.html` (passcode login + arena list), `/admin.html` (boss), `/arena.html` (presence + exit)
+- Basic pages: `/` (lobby), `/admin` (boss tools), `/arena/:id` (presence + exit), `/training` (Phaser test scene)
 
 ## Prereqs
 - Firebase project: **stickfightpa**
@@ -14,3 +14,23 @@ Minimal Firebase + Vite TypeScript scaffold with:
 ```bash
 npm install
 npm run dev
+```
+
+The dev server binds to `0.0.0.0` so it works in Codespaces and remote containers. Visit `http://localhost:5173/` (or the forwarded port) and navigate to `/training` for the Phaser training route. Legacy links to `/training.html` will redirect automatically.
+
+To clean Vite's cache, run `npm run clean:vite`.
+
+## Quick sanity check (in browser console)
+
+After loading the app locally, you can confirm Firebase connectivity by pasting this snippet into the browser console:
+
+```js
+(async () => {
+  const { ensureAnonAuth, listArenas } = await import("/src/firebase.ts");
+  const user = await ensureAnonAuth();
+  console.log("Anon UID", user.uid);
+  console.log("Arenas", await listArenas());
+})();
+```
+
+It signs in anonymously (if needed) and fetches the arenas collection, logging the results.
