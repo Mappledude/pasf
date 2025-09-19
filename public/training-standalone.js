@@ -1,10 +1,10 @@
 (function () {
-  console.info("[training.js] script loaded");
+  console.info("[training-standalone.js] script loaded");
 
   if (!window.Phaser) {
     const el = document.getElementById("stats");
     if (el) el.textContent = "Failed to load Phaser (window.Phaser missing).";
-    console.error("[training.js] Phaser not found on window.");
+    console.error("[training-standalone.js] Phaser not found on window.");
     return;
   }
 
@@ -12,7 +12,7 @@
     Extends: Phaser.Scene,
     initialize: function TrainingScene() { Phaser.Scene.call(this, { key: "Training" }); },
     create: function () {
-      console.info("[training.js] scene.create()");
+      console.info("[training-standalone.js] scene.create()");
       this.cameras.main.setBackgroundColor(0x0f1115);
       this.add.text(480, 60, "Training Scene Ready", {
         fontFamily: "system-ui, Arial",
