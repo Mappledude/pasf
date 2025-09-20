@@ -29,6 +29,7 @@ export class Player extends Phaser.Events.EventEmitter {
   private attackCooldown = 0;
   private attackConsumed = false;
   private coyoteTimer = 0;
+  private controlsEnabled = true;
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     super();
@@ -53,6 +54,25 @@ export class Player extends Phaser.Events.EventEmitter {
   }
 
   update(dt: number) {
+    const attackBody = this.attackHitbox.body as Phaser.Physics.Arcade.Body;
+
+    if (!this.controlsEnabled) {
+      this.body.setAccelerationX(0);
+      this.body.setVelocityX(0);
+      this.body.setDrag(GROUND_DRAG, 0);
+      this.coyoteTimer = 0;
+      this.attackCooldown = 0;
+      this.attackTimer = 0;
+      this.attackConsumed = false;
+      attackBody.enable = false;
+      this.attackHitbox.setVisible(false);
+
+      const hitboxX = this.sprite.x + this.facing * ATTACK_OFFSET;
+      attackBody.reset(hitboxX, this.sprite.y);
+      this.attackHitbox.setPosition(hitboxX, this.sprite.y);
+      return;
+    }
+
     const leftDown = this.controls.left.isDown;
     const rightDown = this.controls.right.isDown;
 
@@ -95,7 +115,6 @@ export class Player extends Phaser.Events.EventEmitter {
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
     this.attackTimer = Math.max(0, this.attackTimer - dt);
 
-    const attackBody = this.attackHitbox.body as Phaser.Physics.Arcade.Body;
     const hitboxX = this.sprite.x + this.facing * ATTACK_OFFSET;
     attackBody.reset(hitboxX, this.sprite.y);
     this.attackHitbox.setPosition(hitboxX, this.sprite.y);
@@ -122,7 +141,7 @@ export class Player extends Phaser.Events.EventEmitter {
   }
 
   healFull() {
-    this.hp = this.maxHp;
+    this.setHp(this.maxHp);
   }
 
   destroy() {
@@ -130,6 +149,35 @@ export class Player extends Phaser.Events.EventEmitter {
     this.attackHitbox.destroy();
     this.sprite.destroy();
     this.removeAllListeners();
+  }
+
+  setControlsEnabled(enabled: boolean) {
+    if (this.controlsEnabled === enabled) return;
+    this.controlsEnabled = enabled;
+    if (!enabled) {
+      this.body.setVelocity(0, this.body.velocity.y);
+      this.body.setAcceleration(0, 0);
+      this.coyoteTimer = 0;
+      this.attackTimer = 0;
+      this.attackCooldown = 0;
+      this.attackConsumed = false;
+      const attackBody = this.attackHitbox.body as Phaser.Physics.Arcade.Body;
+      attackBody.enable = false;
+      this.attackHitbox.setVisible(false);
+    }
+  }
+
+  setHp(hp: number) {
+    this.hp = Phaser.Math.Clamp(hp, 0, this.maxHp);
+  }
+
+  setPosition(x: number, y: number) {
+    this.sprite.setPosition(x, y);
+    this.body.reset(x, y);
+    const attackBody = this.attackHitbox.body as Phaser.Physics.Arcade.Body;
+    const hitboxX = x + this.facing * ATTACK_OFFSET;
+    attackBody.reset(hitboxX, y);
+    this.attackHitbox.setPosition(hitboxX, y);
   }
 
   private startAttack() {
