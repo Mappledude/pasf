@@ -28,7 +28,7 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
-      match /state/{documentId} {
+      match /state {
         allow read: if isSignedIn();
         allow write: if isSignedIn();
       }
