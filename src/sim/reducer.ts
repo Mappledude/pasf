@@ -1,5 +1,6 @@
 import type {
   ActionDoc,
+  HistoryEntry,
   InputFlags,
   PlayerId,
   PlayerState,
@@ -9,6 +10,8 @@ import type {
 } from './types.js';
 
 const FIXED_DT_MS = 16.6667;
+const HISTORY_MS = 3000;
+const HISTORY_CAP = Math.ceil(HISTORY_MS / FIXED_DT_MS);
 const GRAVITY = 900;
 const ACCEL = 1200;
 const FRICTION_G = 1400;
@@ -37,6 +40,10 @@ interface InternalSim extends Sim {
   _currentAttackId: Record<PlayerId, number | null>;
   _attackHitToken: Record<PlayerId, number | null>;
   _accumulator: number;
+  _history: (HistoryEntry | undefined)[];
+  _historyHead: number;
+  _historySize: number;
+  _lastAppliedSeq: Record<PlayerId, number>;
 }
 
 const EPSILON = 1e-6;
@@ -80,7 +87,109 @@ function ensureInternal(sim: Sim): InternalSim {
   if (typeof internal._accumulator !== 'number') {
     internal._accumulator = 0;
   }
+  if (!internal._history) {
+    internal._history = new Array<HistoryEntry | undefined>(HISTORY_CAP);
+  }
+  if (typeof internal._historyHead !== 'number') {
+    internal._historyHead = 0;
+  }
+  if (typeof internal._historySize !== 'number') {
+    internal._historySize = 0;
+  }
+  if (!internal._lastAppliedSeq) {
+    internal._lastAppliedSeq = {};
+  }
+  if (!internal._dbg) {
+    internal._dbg = { lastAppliedSeq: {} };
+  } else if (!internal._dbg.lastAppliedSeq) {
+    internal._dbg.lastAppliedSeq = {};
+  }
   return internal;
+}
+
+function cloneInputs(inputs: Record<PlayerId, InputFlags>): Record<PlayerId, InputFlags> {
+  const copy: Record<PlayerId, InputFlags> = {};
+  for (const [playerId, flags] of Object.entries(inputs)) {
+    if (!flags) {
+      continue;
+    }
+    copy[playerId as PlayerId] = { ...flags };
+  }
+  return copy;
+}
+
+function cloneBooleanRecord(record: Record<PlayerId, boolean>): Record<PlayerId, boolean> {
+  const copy: Record<PlayerId, boolean> = {};
+  for (const [playerId, value] of Object.entries(record)) {
+    copy[playerId as PlayerId] = !!value;
+  }
+  return copy;
+}
+
+function cloneNumberRecord(record: Record<PlayerId, number>): Record<PlayerId, number> {
+  const copy: Record<PlayerId, number> = {};
+  for (const [playerId, value] of Object.entries(record)) {
+    if (typeof value === 'number') {
+      copy[playerId as PlayerId] = value;
+    }
+  }
+  return copy;
+}
+
+function cloneNullableNumberRecord(
+  record: Record<PlayerId, number | null>,
+): Record<PlayerId, number | null> {
+  const copy: Record<PlayerId, number | null> = {};
+  for (const [playerId, value] of Object.entries(record)) {
+    copy[playerId as PlayerId] = value ?? null;
+  }
+  return copy;
+}
+
+function clonePlayersRecord(
+  players: Record<PlayerId, PlayerState>,
+): Record<PlayerId, PlayerState> {
+  const copy: Record<PlayerId, PlayerState> = {};
+  for (const [playerId, state] of Object.entries(players)) {
+    copy[playerId as PlayerId] = clonePlayerState(state);
+  }
+  return copy;
+}
+
+function recordHistorySnapshot(internal: InternalSim): void {
+  const history = internal._history;
+  if (!history || !history.length) {
+    return;
+  }
+  const entry: HistoryEntry = {
+    tick: internal.snap.tick,
+    tMs: internal.snap.tMs,
+    players: clonePlayersRecord(internal.snap.players),
+    inputs: cloneInputs(internal._inputs),
+    prevJump: cloneBooleanRecord(internal._prevJump),
+    prevAttack: cloneBooleanRecord(internal._prevAttack),
+    attackSeq: cloneNumberRecord(internal._attackSeq),
+    currentAttackId: cloneNullableNumberRecord(internal._currentAttackId),
+    attackHitToken: cloneNullableNumberRecord(internal._attackHitToken),
+    accumulator: internal._accumulator,
+    lastAppliedSeq: cloneNumberRecord(internal._lastAppliedSeq),
+  };
+
+  const head = internal._historyHead;
+  const size = internal._historySize;
+  let index: number;
+  if (size < HISTORY_CAP) {
+    index = (head + size) % HISTORY_CAP;
+    internal._historySize = size + 1;
+  } else {
+    index = head;
+    internal._historyHead = (head + 1) % HISTORY_CAP;
+  }
+  history[index] = entry;
+
+  if (internal._dbg) {
+    internal._dbg.lastAppliedSeq = cloneNumberRecord(internal._lastAppliedSeq);
+  }
 }
 
 function createPlayerState(position: Vec2, dir: -1 | 1): PlayerState {
@@ -261,6 +370,14 @@ export function initSim(params: { seed: number; myPlayerId: string; opponentId: 
   internal._attackHitToken[leftId] = null;
   internal._attackHitToken[rightId] = null;
   internal._accumulator = 0;
+  internal._lastAppliedSeq[leftId] = 0;
+  internal._lastAppliedSeq[rightId] = 0;
+  if (internal._dbg) {
+    internal._dbg.lastAppliedSeq[leftId] = 0;
+    internal._dbg.lastAppliedSeq[rightId] = 0;
+    internal._dbg.lastRewindSkipped = false;
+  }
+  recordHistorySnapshot(internal);
 
   return sim;
 }
@@ -273,6 +390,14 @@ export function applyActions(sim: Sim, actions: ActionDoc[], dtMs: number): void
   for (const action of relevantActions) {
     const previous = internal._inputs[action.playerId] ?? {};
     internal._inputs[action.playerId] = { ...previous, ...action.input };
+    const current = internal._lastAppliedSeq[action.playerId] ?? 0;
+    if (action.seq > current) {
+      internal._lastAppliedSeq[action.playerId] = action.seq;
+    }
+  }
+
+  if (internal._dbg) {
+    internal._dbg.lastAppliedSeq = cloneNumberRecord(internal._lastAppliedSeq);
   }
 
   internal._accumulator += dtMs;
@@ -280,6 +405,7 @@ export function applyActions(sim: Sim, actions: ActionDoc[], dtMs: number): void
   while (internal._accumulator + EPSILON >= FIXED_DT_MS) {
     internal._accumulator -= FIXED_DT_MS;
     stepSim(internal);
+    recordHistorySnapshot(internal);
   }
 }
 
@@ -296,6 +422,61 @@ export function getSnapshot(sim: Sim): Snapshot {
 }
 
 export function rewindTo(_sim: Sim, _tick: number): void {
-  // no-op placeholder for future rollback support
+  const internal = ensureInternal(_sim);
+  const history = internal._history;
+  const size = internal._historySize;
+  const head = internal._historyHead;
+  if (!history || size === 0) {
+    if (internal._dbg) {
+      internal._dbg.lastRewindSkipped = true;
+    }
+    return;
+  }
+
+  const oldest = history[head];
+  if (!oldest || _tick < oldest.tick) {
+    if (internal._dbg) {
+      internal._dbg.lastRewindSkipped = true;
+    }
+    return;
+  }
+
+  let foundEntry: HistoryEntry | undefined;
+  let offset = -1;
+  for (let i = 0; i < size; i += 1) {
+    const index = (head + i) % HISTORY_CAP;
+    const entry = history[index];
+    if (entry && entry.tick === _tick) {
+      foundEntry = entry;
+      offset = i;
+      break;
+    }
+  }
+
+  if (!foundEntry) {
+    if (internal._dbg) {
+      internal._dbg.lastRewindSkipped = true;
+    }
+    return;
+  }
+
+  internal.snap.tick = foundEntry.tick;
+  internal.snap.tMs = foundEntry.tMs;
+  internal.snap.players = clonePlayersRecord(foundEntry.players);
+  internal._inputs = cloneInputs(foundEntry.inputs);
+  internal._prevJump = cloneBooleanRecord(foundEntry.prevJump);
+  internal._prevAttack = cloneBooleanRecord(foundEntry.prevAttack);
+  internal._attackSeq = cloneNumberRecord(foundEntry.attackSeq);
+  internal._currentAttackId = cloneNullableNumberRecord(foundEntry.currentAttackId);
+  internal._attackHitToken = cloneNullableNumberRecord(foundEntry.attackHitToken);
+  internal._accumulator = foundEntry.accumulator;
+  internal._lastAppliedSeq = cloneNumberRecord(foundEntry.lastAppliedSeq);
+
+  internal._historySize = offset + 1;
+
+  if (internal._dbg) {
+    internal._dbg.lastAppliedSeq = cloneNumberRecord(internal._lastAppliedSeq);
+    internal._dbg.lastRewindSkipped = false;
+  }
 }
 

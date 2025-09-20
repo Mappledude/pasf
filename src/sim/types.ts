@@ -28,6 +28,25 @@ export type PlayerState = {
   grounded: boolean;
 };
 
+export type HistoryEntry = {
+  tick: number;
+  tMs: number;
+  players: Record<PlayerId, PlayerState>;
+  inputs: Record<PlayerId, InputFlags>;
+  prevJump: Record<PlayerId, boolean>;
+  prevAttack: Record<PlayerId, boolean>;
+  attackSeq: Record<PlayerId, number>;
+  currentAttackId: Record<PlayerId, number | null>;
+  attackHitToken: Record<PlayerId, number | null>;
+  accumulator: number;
+  lastAppliedSeq: Record<PlayerId, number>;
+};
+
+export type SimDebug = {
+  lastAppliedSeq: Record<PlayerId, number>;
+  lastRewindSkipped?: boolean;
+};
+
 export type Snapshot = {
   tick: number;
   tMs: number;
@@ -39,4 +58,9 @@ export type Sim = {
   oppId: PlayerId;
   seed: number;
   snap: Snapshot;
+  _history?: (HistoryEntry | undefined)[];
+  _historyHead?: number;
+  _historySize?: number;
+  _lastAppliedSeq?: Record<PlayerId, number>;
+  _dbg?: SimDebug;
 };

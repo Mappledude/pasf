@@ -5,11 +5,12 @@
     "outDir": "dist-tests",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "types": ["vite/client"],
+    "types": [],
     "sourceMap": false
   },
   "include": [
     "src/types.d.ts",
-    "src/sim/**/*.ts"
+    "src/sim/**/*.ts",
+    "vendor/vitest/index.d.ts"
   ]
 }
