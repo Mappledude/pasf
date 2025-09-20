@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist-tests",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["vite/client"],
+    "sourceMap": false
+  },
+  "include": [
+    "src/types.d.ts",
+    "src/sim/**/*.ts"
+  ]
+}
