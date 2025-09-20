@@ -10,6 +10,7 @@ import {
   watchArenaPresence,
 } from "../firebase";
 import { useAuth } from "../context/AuthContext";
+import { disposeActionBus, initActionBus, publishInput } from "../net/ActionBus";
 import type { Arena, ArenaPresenceEntry } from "../types/models";
 import { makeGame } from "../game/phaserGame";
 import ArenaScene from "../game/arena/ArenaScene";
@@ -22,7 +23,7 @@ const SPAWN_B = { x: 720, y: 360 } as const;
 const ArenaPage: React.FC = () => {
   const { arenaId } = useParams<{ arenaId: string }>();
   const navigate = useNavigate();
-  const { player, loading } = useAuth();
+  const { player, user, loading } = useAuth();
 
   const [arena, setArena] = useState<Arena | null>(null);
   const [playersInArena, setPlayersInArena] = useState<ArenaPresenceEntry[]>([]);
@@ -144,7 +145,12 @@ const ArenaPage: React.FC = () => {
 
       <main style={{ padding: "16px" }}>
         {player && arenaId ? (
-          <ArenaCanvas arenaId={arenaId} me={{ id: player.id, codename: player.codename }} presence={playersInArena} />
+          <ArenaCanvas
+            arenaId={arenaId}
+            me={{ id: player.id, codename: player.codename }}
+            presence={playersInArena}
+            networkId={user?.uid ?? null}
+          />
         ) : (
           <div style={{ padding: "24px", textAlign: "center" }}>Loading arena...</div>
         )}
@@ -159,13 +165,15 @@ interface ArenaCanvasProps {
   arenaId: string;
   me: { id: string; codename: string };
   presence: ArenaPresenceEntry[];
+  networkId: string | null;
 }
 
-const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence }) => {
+const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networkId }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const initKeyRef = useRef<string | null>(null);
   const [stateReady, setStateReady] = useState(false);
+  const [busReady, setBusReady] = useState(false);
 
   const spawn = useMemo(() => {
     const ids = presence.map((p) => p.playerId);
@@ -241,6 +249,87 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence }) => {
     };
   }, []);
 
+  useEffect(() => {
+    if (!stateReady || !networkId) {
+      setBusReady(false);
+      disposeActionBus();
+      return;
+    }
+
+    let cancelled = false;
+    initActionBus({
+      arenaId,
+      playerId: networkId,
+      onRemoteAction: (action) => {
+        if (cancelled) return;
+        console.debug("[ArenaCanvas] remote action", action);
+      },
+    })
+      .then(() => {
+        if (!cancelled) {
+          setBusReady(true);
+        }
+      })
+      .catch((err) => {
+        console.warn("[ArenaCanvas] initActionBus failed", err);
+      });
+
+    return () => {
+      cancelled = true;
+      setBusReady(false);
+      disposeActionBus();
+    };
+  }, [arenaId, networkId, stateReady]);
+
+  useEffect(() => {
+    if (!busReady) return;
+
+    const keyState: { [K in "left" | "right" | "jump" | "attack"]: boolean } = {
+      left: false,
+      right: false,
+      jump: false,
+      attack: false,
+    };
+
+    const keyToAction: Record<string, keyof typeof keyState> = {
+      ArrowLeft: "left",
+      KeyA: "left",
+      ArrowRight: "right",
+      KeyD: "right",
+      ArrowUp: "jump",
+      KeyW: "jump",
+      Space: "jump",
+      KeyJ: "attack",
+      KeyF: "attack",
+      KeyK: "attack",
+    };
+
+    const updateState = (code: string, pressed: boolean) => {
+      const action = keyToAction[code];
+      if (!action) return;
+      if (keyState[action] === pressed) return;
+      keyState[action] = pressed;
+      publishInput({ ...keyState });
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      updateState(event.code, true);
+    };
+
+    const onKeyUp = (event: KeyboardEvent) => {
+      updateState(event.code, false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [busReady]);
+
   const gameReady = stateReady && !!gameRef.current;
 
   return (
@@ -255,6 +344,22 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence }) => {
           position: "relative",
         }}
       >
+        <div
+          style={{
+            position: "absolute",
+            top: 8,
+            left: 8,
+            background: "rgba(34, 197, 94, 0.15)",
+            border: "1px solid rgba(34, 197, 94, 0.4)",
+            color: "#34d399",
+            fontSize: 12,
+            padding: "4px 8px",
+            borderRadius: 999,
+            pointerEvents: "none",
+          }}
+        >
+          NET: 10Hz, dedupe ON
+        </div>
         {!gameReady ? (
           <div
             style={{
