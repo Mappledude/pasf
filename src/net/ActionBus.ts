@@ -43,14 +43,14 @@ export interface ActionDocument {
 interface InitOptions {
   arenaId: string;
   playerId: string;
-  onRemoteAction: (action: ActionDocument) => void;
+  onRemoteActions: (actions: ActionDocument[]) => void;
 }
 
 interface ActionBusState {
   arenaId: string;
   playerId: string;
   seq: number;
-  onRemoteAction: (action: ActionDocument) => void;
+  onRemoteActions: (actions: ActionDocument[]) => void;
   unsubscribe?: Unsubscribe;
   ready: boolean;
   lastSendAt: number;
@@ -194,7 +194,7 @@ export async function initActionBus(options: InitOptions): Promise<void> {
     arenaId: options.arenaId,
     playerId: options.playerId,
     seq,
-    onRemoteAction: options.onRemoteAction,
+    onRemoteActions: options.onRemoteActions,
     ready: false,
     lastSendAt: 0,
     lastSeqWriteAt: Date.now(),
@@ -207,6 +207,7 @@ export async function initActionBus(options: InitOptions): Promise<void> {
   state.unsubscribe = onSnapshot(
     q,
     (snapshot) => {
+      const batch: ActionDocument[] = [];
       snapshot.docChanges().forEach((change) => {
         if (change.type !== "added") return;
         const data = change.doc.data() as ActionDocument;
@@ -216,9 +217,12 @@ export async function initActionBus(options: InitOptions): Promise<void> {
           id: change.doc.id,
           ...data,
         };
-        console.info("[NET] recv", action);
-        state.onRemoteAction(action);
+        batch.push(action);
       });
+      if (batch.length > 0) {
+        console.info("[NET] recv batch", batch);
+        state.onRemoteActions(batch);
+      }
     },
     (error) => {
       console.error("[NET] subscribe error", error);
