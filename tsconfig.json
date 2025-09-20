@@ -11,8 +11,8 @@
     "noEmit": true,
     "strict": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["vite/client"],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "types": ["vite/client"]
   },
   "include": ["src", "vite.config.ts"]
 }
