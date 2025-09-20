@@ -1,23 +1,52 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{db}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
     match /arenas/{arenaId} {
-      allow read, write: if request.auth != null; // DEV
+      allow read: if isSignedIn();
+      allow write: if false;
+
       match /presence/{playerId} {
-        allow read, write: if request.auth != null; // DEV
+        allow read: if isSignedIn();
+        allow create, update, delete: if request.auth != null && request.auth.uid == playerId;
       }
+
+      match /players/{playerId} {
+        allow read: if isSignedIn();
+        allow create, update: if request.auth != null && request.auth.uid == playerId;
+        allow delete: if false;
+      }
+
+      match /actions/{actionId} {
+        allow read: if isSignedIn();
+        allow create: if request.auth != null
+          && request.auth.uid == request.resource.data.playerId
+          && request.resource.data.arenaId == arenaId;
+        allow update, delete: if false;
+      }
+
       match /state/{documentId} {
-        allow read, write: if request.auth != null; // DEV
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
       }
     }
+
     match /players/{playerId} {
-      allow read, write: if request.auth != null; // DEV
+      allow read: if isSignedIn();
+      allow write: if false;
     }
+
     match /passcodes/{doc} {
-      allow read, write: if request.auth != null; // DEV
+      allow read: if isSignedIn();
+      allow write: if false;
     }
+
     match /leaderboard/{doc} {
-      allow read, write: if request.auth != null; // DEV
+      allow read: if isSignedIn();
+      allow write: if false;
     }
   }
 }
