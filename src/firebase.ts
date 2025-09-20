@@ -22,6 +22,7 @@ import {
   where,
   orderBy,
   onSnapshot,
+  runTransaction,
   type Unsubscribe,
 } from "firebase/firestore";
 
@@ -97,6 +98,17 @@ export interface ArenaPresenceEntry {
   codename: string;
   joinedAt?: ISODate;
 }
+
+export type ArenaPlayerState = {
+  codename: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  facing: "L" | "R";
+  anim?: string;
+  hp: number;
+};
 
 export interface LeaderboardEntry {
   id: string;
@@ -275,6 +287,102 @@ export const watchArenaPresence = (
     cb(players);
   });
 };
+
+const arenaStateDoc = (arenaId: string) => doc(db, "arenas", arenaId, "state", "shared");
+
+export async function initArenaPlayerState(
+  arenaId: string,
+  me: { id: string; codename: string },
+  spawn: { x: number; y: number },
+) {
+  await ensureAnonAuth();
+  const ref = arenaStateDoc(arenaId);
+  await setDoc(
+    ref,
+    {
+      tick: 0,
+      players: {
+        [me.id]: {
+          codename: me.codename,
+          x: spawn.x,
+          y: spawn.y,
+          vx: 0,
+          vy: 0,
+          facing: "R",
+          hp: 100,
+          updatedAt: serverTimestamp(),
+        },
+      },
+      lastUpdate: serverTimestamp(),
+    },
+    { merge: true },
+  );
+}
+
+export async function updateArenaPlayerState(
+  arenaId: string,
+  meId: string,
+  partial: Partial<ArenaPlayerState>,
+) {
+  await ensureAnonAuth();
+  const ref = arenaStateDoc(arenaId);
+  await setDoc(
+    ref,
+    {
+      players: {
+        [meId]: {
+          ...partial,
+          updatedAt: serverTimestamp(),
+        },
+      },
+      lastUpdate: serverTimestamp(),
+    },
+    { merge: true },
+  );
+}
+
+export function watchArenaState(arenaId: string, cb: (state: any) => void) {
+  const ref = arenaStateDoc(arenaId);
+  return onSnapshot(ref, (snap) => cb(snap.exists() ? snap.data() : undefined));
+}
+
+export async function applyDamage(arenaId: string, targetPlayerId: string, amount: number) {
+  await ensureAnonAuth();
+  const ref = arenaStateDoc(arenaId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const data = snap.data() as any;
+    const cur = data.players?.[targetPlayerId];
+    if (!cur) return;
+    const hp = Math.max(0, Math.min(100, (cur.hp ?? 100) - amount));
+    tx.set(
+      ref,
+      {
+        players: {
+          [targetPlayerId]: { hp, updatedAt: serverTimestamp() },
+        },
+        lastUpdate: serverTimestamp(),
+      },
+      { merge: true },
+    );
+  });
+}
+
+export async function respawnPlayer(
+  arenaId: string,
+  meId: string,
+  spawn: { x: number; y: number },
+) {
+  await updateArenaPlayerState(arenaId, meId, {
+    x: spawn.x,
+    y: spawn.y,
+    vx: 0,
+    vy: 0,
+    hp: 100,
+    anim: undefined,
+  });
+}
 
 // === LEADERBOARD ===
 export interface UpsertLeaderboardInput {
