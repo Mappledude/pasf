@@ -302,7 +302,7 @@ export const watchArenaPresence = (
   });
 };
 
-const arenaStateDoc = (arenaId: string) => doc(db, "arenas", arenaId, "state", "shared");
+const arenaStateDoc = (arenaId: string) => doc(db, "arenas", arenaId, "state");
 
 export async function initArenaPlayerState(
   arenaId: string,
