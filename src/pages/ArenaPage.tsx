@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Phaser from "phaser";
+import { onSnapshot, type DocumentReference } from "firebase/firestore";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ensureAnonAuth,
@@ -16,6 +17,7 @@ import { makeGame } from "../game/phaserGame";
 import ArenaScene from "../game/arena/ArenaScene";
 import { applyActions, getSnapshot, initSim } from "../sim/reducer";
 import type { ActionDoc, InputFlags, Sim, Snapshot } from "../sim/types";
+import { ensureArenaState, arenaStateDoc } from "../lib/arenaState";
 
 const CANVAS_WIDTH = 960;
 const CANVAS_HEIGHT = 540;
@@ -206,6 +208,9 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
   const gameRef = useRef<Phaser.Game | null>(null);
   const initKeyRef = useRef<string | null>(null);
   const [stateReady, setStateReady] = useState(false);
+  const [arenaInitError, setArenaInitError] = useState<string | null>(null);
+  const [stateRef, setStateRef] = useState<DocumentReference | null>(null);
+  const [stateData, setStateData] = useState<Record<string, unknown> | null>(null);
   const [busReady, setBusReady] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
   const [gameReady, setGameReady] = useState(false);
@@ -227,6 +232,69 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
   const loopLogRef = useRef({ lastLog: 0, lastTick: 0 });
 
   const statePlayerId = useMemo(() => networkId ?? me.id, [networkId, me.id]);
+
+  useEffect(() => {
+    if (!arenaId || !networkId) {
+      setStateRef(null);
+      setStateReady(false);
+      setStateData(null);
+      setArenaInitError(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        await ensureArenaState(arenaId);
+        if (cancelled) return;
+        setArenaInitError(null);
+        setStateRef(arenaStateDoc(arenaId));
+      } catch (err) {
+        console.error("[arena] ensureArenaState failed:", err);
+        if (cancelled) return;
+        setStateRef(null);
+        setStateReady(false);
+        setStateData(null);
+        setArenaInitError(err instanceof Error ? err.message : String(err));
+      }
+    })().catch((err) => {
+      console.error("[arena] ensureArenaState threw:", err);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [arenaId, networkId]);
+
+  useEffect(() => {
+    if (!stateRef) {
+      setStateReady(false);
+      setStateData(null);
+      return;
+    }
+
+    const unsubscribe = onSnapshot(
+      stateRef,
+      (snap) => {
+        const exists = snap.exists();
+        setStateReady(exists);
+        setStateData(exists ? (snap.data() as Record<string, unknown>) : null);
+        if (!exists) {
+          return;
+        }
+        setArenaInitError(null);
+      },
+      (err) => {
+        console.error("[arena] state subscription error:", err);
+        setArenaInitError(err instanceof Error ? err.message : String(err));
+      },
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [stateRef]);
 
   const checkGameReady = useCallback(
     (tick: number) => {
@@ -321,8 +389,7 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
   }, [presence, statePlayerId]);
 
   useEffect(() => {
-    if (!spawn || !networkId) {
-      setStateReady(false);
+    if (!stateRef || !spawn || !networkId) {
       return;
     }
     const key = `${arenaId}:${statePlayerId}:${me.codename}:${spawn.x}:${spawn.y}`;
@@ -330,7 +397,7 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
       return;
     }
     let aborted = false;
-    setStateReady(false);
+    setArenaInitError(null);
     (async () => {
       try {
         await initArenaPlayerState(
@@ -340,13 +407,12 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
         );
         if (aborted) return;
         initKeyRef.current = key;
-        setStateReady(true);
         console.info("[BOOT] stateReady=true");
       } catch (err) {
         console.warn("[ArenaCanvas] initArenaPlayerState failed", err);
         if (!aborted) {
           initKeyRef.current = null;
-          setStateReady(false);
+          setArenaInitError(err instanceof Error ? err.message : String(err));
         }
       }
     })().catch((err) => console.error(err));
@@ -357,7 +423,7 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
         initKeyRef.current = null;
       }
     };
-  }, [arenaId, me.codename, networkId, spawn, statePlayerId]);
+  }, [arenaId, me.codename, networkId, spawn, statePlayerId, stateRef]);
 
   useEffect(() => {
     if (!stateReady) return;
@@ -622,6 +688,55 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
     };
   }, [busReady, updateRenderState]);
 
+  const overlayBaseStyle: React.CSSProperties = {
+    position: "absolute",
+    inset: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 16,
+    padding: "0 16px",
+    textAlign: "center",
+  };
+
+  let overlayContent: React.ReactNode = null;
+  if (arenaInitError) {
+    overlayContent = (
+      <div
+        style={{
+          ...overlayBaseStyle,
+          color: "#fca5a5",
+          background: "rgba(239, 68, 68, 0.08)",
+          border: "1px solid rgba(239, 68, 68, 0.3)",
+        }}
+      >
+        Failed to initialize arena: {String(arenaInitError)}
+      </div>
+    );
+  } else if (!stateReady) {
+    overlayContent = (
+      <div
+        style={{
+          ...overlayBaseStyle,
+          color: "#9ca3af",
+        }}
+      >
+        {`Initializing arena… (waiting for /arenas/${arenaId}/state)`}
+      </div>
+    );
+  } else if (!gameReady) {
+    overlayContent = (
+      <div
+        style={{
+          ...overlayBaseStyle,
+          color: "#9ca3af",
+        }}
+      >
+        Initializing arena...
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: "flex", justifyContent: "center" }}>
       <div
@@ -666,21 +781,7 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
             minWidth: 180,
           }}
         />
-        {!gameReady ? (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#9ca3af",
-              fontSize: 16,
-            }}
-          >
-            Initializing arena...
-          </div>
-        ) : null}
+        {overlayContent}
       </div>
     </div>
   );
