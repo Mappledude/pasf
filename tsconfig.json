@@ -12,7 +12,8 @@
     "strict": true,
     "forceConsistentCasingInFileNames": true,
     "jsx": "react-jsx",
-    "types": ["vite/client"]
+    "typeRoots": ["./types", "./node_modules/@types"],
+    "types": []
   },
   "include": ["src", "vite.config.ts"]
 }

@@ -29,3 +29,8 @@ declare module 'node:assert/strict' {
 
   export default assert;
 }
+
+declare module 'vite/client' {
+  const value: unknown;
+  export default value;
+}
