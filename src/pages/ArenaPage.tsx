@@ -96,16 +96,17 @@ const ArenaPage: React.FC = () => {
   }, [arenaId]);
 
   useEffect(() => {
-    if (!arenaId || !player) {
+    if (!arenaId || !player || !user?.uid) {
       return;
     }
 
+    const presenceId = user.uid;
     let unsubscribe: (() => void) | undefined;
     let active = true;
 
     const enterArena = async () => {
       try {
-        await joinArena(arenaId, player.id, player.codename);
+        await joinArena(arenaId, presenceId, player.codename, player.id);
         if (!active) return;
         unsubscribe = watchArenaPresence(arenaId, (entries) => {
           setPlayersInArena(entries);
@@ -123,17 +124,23 @@ const ArenaPage: React.FC = () => {
     return () => {
       active = false;
       unsubscribe?.();
-      if (arenaId && player) {
-        leaveArena(arenaId, player.id).catch((err) => {
+      if (arenaId) {
+        leaveArena(arenaId, presenceId).catch((err) => {
           console.warn("[ArenaPage] failed to leave arena", err);
         });
       }
     };
-  }, [arenaId, player]);
+  }, [arenaId, player, user?.uid]);
+
+  useEffect(() => {
+    if (!arenaId) return;
+    console.info(`[BOOT] route arenaId=${arenaId} playerId=${user?.uid ?? "none"}`);
+  }, [arenaId, user?.uid]);
 
   const handleExit = async () => {
-    if (arenaId && player) {
-      await leaveArena(arenaId, player.id).catch((err) => {
+    const presenceId = user?.uid ?? player?.id;
+    if (arenaId && presenceId) {
+      await leaveArena(arenaId, presenceId).catch((err) => {
         console.warn("[ArenaPage] failed to leave arena", err);
       });
     }
@@ -200,6 +207,8 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
   const initKeyRef = useRef<string | null>(null);
   const [stateReady, setStateReady] = useState(false);
   const [busReady, setBusReady] = useState(false);
+  const [canvasReady, setCanvasReady] = useState(false);
+  const [gameReady, setGameReady] = useState(false);
   const simRef = useRef<Sim | null>(null);
   const pendingActionsRef = useRef<ActionDoc[]>([]);
   const localSeqRef = useRef(0);
@@ -212,6 +221,25 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
     me: { x: SPAWN_A.x, y: SPAWN_A.y, hp: 100, dir: 1 },
   });
   const simOverlayRef = useRef<HTMLDivElement | null>(null);
+  const stateReadyRef = useRef(false);
+  const gameReadyRef = useRef(false);
+  const rafStartedRef = useRef(false);
+  const loopLogRef = useRef({ lastLog: 0, lastTick: 0 });
+
+  const statePlayerId = useMemo(() => networkId ?? me.id, [networkId, me.id]);
+
+  const checkGameReady = useCallback(
+    (tick: number) => {
+      const readyByTick = tick >= 1;
+      const readyByState = stateReadyRef.current && !!gameRef.current;
+      if ((readyByTick || readyByState) && !gameReadyRef.current) {
+        gameReadyRef.current = true;
+        setGameReady(true);
+        console.info("[BOOT] gameReady=true");
+      }
+    },
+    [],
+  );
 
   const queueLocalAction = useCallback(
     (input: InputFlags) => {
@@ -275,40 +303,48 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
         }
         simOverlayRef.current.textContent = parts.join(" | ");
       }
+      checkGameReady(snapshot.tick);
     },
-    [],
+    [checkGameReady],
   );
 
   const spawn = useMemo(() => {
     const ids = presence.map((p) => p.playerId);
-    if (!ids.includes(me.id)) {
-      ids.push(me.id);
+    if (!ids.includes(statePlayerId)) {
+      ids.push(statePlayerId);
     }
     ids.sort();
-    const index = ids.indexOf(me.id);
+    const index = ids.indexOf(statePlayerId);
     if (index <= 0) return SPAWN_A;
     if (index === 1) return SPAWN_B;
     return index % 2 === 0 ? SPAWN_A : SPAWN_B;
-  }, [presence, me.id]);
+  }, [presence, statePlayerId]);
 
   useEffect(() => {
-    if (!spawn) return;
-    const key = `${arenaId}:${me.id}:${me.codename}`;
+    if (!spawn || !networkId) {
+      setStateReady(false);
+      return;
+    }
+    const key = `${arenaId}:${statePlayerId}:${me.codename}:${spawn.x}:${spawn.y}`;
     if (initKeyRef.current === key) {
       return;
     }
-    let cancelled = false;
-    initKeyRef.current = key;
+    let aborted = false;
     setStateReady(false);
     (async () => {
       try {
-        await initArenaPlayerState(arenaId, { id: me.id, codename: me.codename }, spawn);
-        if (!cancelled) {
-          setStateReady(true);
-        }
+        await initArenaPlayerState(
+          arenaId,
+          { id: statePlayerId, codename: me.codename },
+          spawn,
+        );
+        if (aborted) return;
+        initKeyRef.current = key;
+        setStateReady(true);
+        console.info("[BOOT] stateReady=true");
       } catch (err) {
         console.warn("[ArenaCanvas] initArenaPlayerState failed", err);
-        if (!cancelled) {
+        if (!aborted) {
           initKeyRef.current = null;
           setStateReady(false);
         }
@@ -316,9 +352,12 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
     })().catch((err) => console.error(err));
 
     return () => {
-      cancelled = true;
+      aborted = true;
+      if (initKeyRef.current === key) {
+        initKeyRef.current = null;
+      }
     };
-  }, [arenaId, me.id, me.codename, spawn]);
+  }, [arenaId, me.codename, networkId, spawn, statePlayerId]);
 
   useEffect(() => {
     if (!stateReady) return;
@@ -337,24 +376,43 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
 
     const game = makeGame(config);
     gameRef.current = game;
-    const sceneData = { arenaId, me: { id: me.id, codename: me.codename }, spawn };
+    const sceneData = { arenaId, me: { id: statePlayerId, codename: me.codename }, spawn };
     game.scene.add("Arena", ArenaScene, true, sceneData);
+    setCanvasReady(true);
+    console.info("[BOOT] canvasReady=true");
+    checkGameReady(renderStateRef.current.tick);
 
     return () => {
       gameRef.current?.destroy(true);
       gameRef.current = null;
+      setCanvasReady(false);
+      gameReadyRef.current = false;
+      setGameReady(false);
     };
-  }, [arenaId, me.id, me.codename, spawn, stateReady]);
+  }, [arenaId, checkGameReady, me.codename, spawn, statePlayerId, stateReady]);
 
   useEffect(() => {
     return () => {
-      gameRef.current?.destroy(true);
-      gameRef.current = null;
+      if (gameRef.current) {
+        gameRef.current.destroy(true);
+        gameRef.current = null;
+      }
+      gameReadyRef.current = false;
     };
   }, []);
 
   useEffect(() => {
-    if (!stateReady || !networkId) {
+    stateReadyRef.current = stateReady;
+    if (!stateReady) {
+      gameReadyRef.current = false;
+      setGameReady(false);
+    } else {
+      checkGameReady(renderStateRef.current.tick);
+    }
+  }, [checkGameReady, stateReady]);
+
+  useEffect(() => {
+    if (!stateReady || !canvasReady || !networkId) {
       simRef.current = null;
       pendingActionsRef.current.length = 0;
       remoteSourceRef.current = null;
@@ -363,7 +421,7 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
     }
 
     const seed = hashSeed(arenaId);
-    const sim = initSim({ seed, myPlayerId: networkId, opponentId: SIM_OPPONENT_ID });
+    const sim = initSim({ seed, myPlayerId: statePlayerId, opponentId: SIM_OPPONENT_ID });
     simRef.current = sim;
     pendingActionsRef.current.length = 0;
     remoteSourceRef.current = null;
@@ -371,6 +429,7 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
     lastFrameRef.current = null;
     const snapshot = getSnapshot(sim);
     updateRenderState(snapshot, sim);
+    console.info(`[SIM] init ok seed=${seed} myId=${statePlayerId} oppId=${SIM_OPPONENT_ID}`);
 
     return () => {
       simRef.current = null;
@@ -378,10 +437,10 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
       remoteSourceRef.current = null;
       lastFrameRef.current = null;
     };
-  }, [arenaId, networkId, stateReady, updateRenderState]);
+  }, [arenaId, canvasReady, networkId, statePlayerId, stateReady, updateRenderState]);
 
   useEffect(() => {
-    if (!stateReady || !networkId) {
+    if (!stateReady || !canvasReady || !networkId) {
       setBusReady(false);
       disposeActionBus();
       return;
@@ -390,7 +449,7 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
     let cancelled = false;
     initActionBus({
       arenaId,
-      playerId: networkId,
+      playerId: statePlayerId,
       onRemoteActions: (actions) => {
         if (cancelled) return;
         const queue = pendingActionsRef.current;
@@ -426,7 +485,7 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
       setBusReady(false);
       disposeActionBus();
     };
-  }, [arenaId, networkId, stateReady]);
+  }, [arenaId, canvasReady, networkId, statePlayerId, stateReady]);
 
   useEffect(() => {
     if (!busReady) return;
@@ -486,14 +545,25 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
 
   useEffect(() => {
     if (!busReady || !simRef.current) {
-      if (rafRef.current !== null) {
+      if (rafStartedRef.current && rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
+        rafStartedRef.current = false;
+        console.info("[LOOP] raf stop");
       }
       lastFrameRef.current = null;
       return;
     }
 
+    if (rafStartedRef.current) {
+      return;
+    }
+
+    rafStartedRef.current = true;
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    loopLogRef.current.lastLog = now;
+    loopLogRef.current.lastTick = renderStateRef.current.tick;
+    console.info("[LOOP] raf start");
     let active = true;
 
     const step = (timestamp: number) => {
@@ -522,6 +592,17 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
       const snapshot = getSnapshot(sim);
       updateRenderState(snapshot, sim);
 
+      const logNow = typeof performance !== "undefined" ? performance.now() : Date.now();
+      const elapsed = logNow - loopLogRef.current.lastLog;
+      const stepsApplied = Math.max(0, snapshot.tick - loopLogRef.current.lastTick);
+      if (elapsed >= 500) {
+        console.info(
+          `[LOOP] tick=${snapshot.tick} stepsApplied=${stepsApplied} dtMs=${dt.toFixed(2)}`,
+        );
+        loopLogRef.current.lastLog = logNow;
+      }
+      loopLogRef.current.lastTick = snapshot.tick;
+
       rafRef.current = requestAnimationFrame(step);
     };
 
@@ -533,11 +614,13 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
+      if (rafStartedRef.current) {
+        rafStartedRef.current = false;
+        console.info("[LOOP] raf stop");
+      }
       lastFrameRef.current = null;
     };
   }, [busReady, updateRenderState]);
-
-  const gameReady = stateReady && !!gameRef.current;
 
   return (
     <div style={{ display: "flex", justifyContent: "center" }}>

@@ -130,7 +130,7 @@ async function sendAction(state: ActionBusState, payload: NormalizedInput) {
 
   try {
     await addDoc(collection(db, "arenas", state.arenaId, "actions"), data);
-    console.info("[NET] sent", data);
+    console.info(`[NET] sent seq=${seq}`, data);
   } catch (err) {
     console.error("[NET] send error", err);
   }
@@ -220,7 +220,7 @@ export async function initActionBus(options: InitOptions): Promise<void> {
         batch.push(action);
       });
       if (batch.length > 0) {
-        console.info("[NET] recv batch", batch);
+        console.info(`[NET] recv batch size=${batch.length}`, batch);
         state.onRemoteActions(batch);
       }
     },
@@ -231,6 +231,7 @@ export async function initActionBus(options: InitOptions): Promise<void> {
 
   state.ready = true;
   busState = state;
+  console.info("[NET] subscribe actions ok");
 }
 
 export function publishInput(input: PlayerInput): void {
@@ -253,5 +254,6 @@ export function disposeActionBus(): void {
   if (busState.pendingTimer) {
     clearTimeout(busState.pendingTimer);
   }
+  console.info("[NET] bus disposed");
   busState = null;
 }

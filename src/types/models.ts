@@ -25,6 +25,8 @@ export interface ArenaPresenceEntry {
   playerId: string;
   codename: string;
   joinedAt?: string;
+  authUid?: string;
+  profileId?: string;
 }
 
 export interface LeaderboardEntry {
