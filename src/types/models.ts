@@ -8,7 +8,6 @@ export interface PlayerProfile {
   id: string;
   codename: string;
   passcode?: string;
-  preferredArenaId?: string;
   createdAt: string;
   lastActiveAt?: string;
 }
@@ -20,6 +19,12 @@ export interface Arena {
   capacity?: number | null;
   isActive: boolean;
   createdAt: string;
+}
+
+export interface ArenaPresenceEntry {
+  playerId: string;
+  codename: string;
+  joinedAt?: string;
 }
 
 export interface LeaderboardEntry {

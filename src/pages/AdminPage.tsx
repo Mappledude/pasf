@@ -1,18 +1,22 @@
-import { FormEvent, useEffect, useState } from "react";
-import { createArena, createPlayer, ensureBossProfile, listArenas, listLeaderboard } from "../firebase";
-import type { Arena, LeaderboardEntry } from "../types/models";
-import React from "react";
-
+import React, { FormEvent, useEffect, useState } from "react";
+import {
+  createArena,
+  createPlayer,
+  ensureBossProfile,
+  listArenas,
+  listPlayers,
+} from "../firebase";
+import type { Arena, PlayerProfile } from "../types/models";
 
 const AdminPage = () => {
   const [bossName, setBossName] = useState("Boss");
   const [playerCodename, setPlayerCodename] = useState("");
   const [playerPasscode, setPlayerPasscode] = useState("");
-  const [playerPreferredArena, setPlayerPreferredArena] = useState<string>("");
   const [arenaName, setArenaName] = useState("");
   const [arenaDescription, setArenaDescription] = useState("");
+  const [arenaCapacity, setArenaCapacity] = useState<string>("");
   const [arenas, setArenas] = useState<Arena[]>([]);
-  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [players, setPlayers] = useState<PlayerProfile[]>([]);
   const [status, setStatus] = useState<string | null>(null);
 
   useEffect(() => {
@@ -24,17 +28,13 @@ const AdminPage = () => {
       console.error(err);
       setStatus("Failed to load admin data");
     });
-    // we intentionally exclude bossName from deps so we only create once on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshData = async () => {
-    const [arenaList, leaderboardEntries] = await Promise.all([
-      listArenas(),
-      listLeaderboard(),
-    ]);
+    const [arenaList, playerList] = await Promise.all([listArenas(), listPlayers()]);
     setArenas(arenaList);
-    setLeaderboard(leaderboardEntries);
+    setPlayers(playerList);
   };
 
   const handleEnsureBossProfile = async (event: FormEvent<HTMLFormElement>) => {
@@ -56,11 +56,9 @@ const AdminPage = () => {
       await createPlayer({
         codename: playerCodename,
         passcode: playerPasscode,
-        preferredArenaId: playerPreferredArena || undefined,
       });
       setPlayerCodename("");
       setPlayerPasscode("");
-      setPlayerPreferredArena("");
       setStatus("Player created.");
       await refreshData();
     } catch (err) {
@@ -75,10 +73,12 @@ const AdminPage = () => {
     try {
       await createArena({
         name: arenaName,
-        description: arenaDescription,
+        description: arenaDescription || undefined,
+        capacity: arenaCapacity ? Number(arenaCapacity) : undefined,
       });
       setArenaName("");
       setArenaDescription("");
+      setArenaCapacity("");
       setStatus("Arena created.");
       await refreshData();
     } catch (err) {
@@ -91,7 +91,7 @@ const AdminPage = () => {
     <main>
       <section className="card">
         <h1>Admin Console</h1>
-        <p>Use this console to manage players, arenas, and the leaderboard.</p>
+        <p>Use this console to manage players and arenas.</p>
         <p>
           <a className="button-link" href="/training-standalone.html" target="_blank" rel="noreferrer">
             Open Training (Standalone)
@@ -112,7 +112,6 @@ const AdminPage = () => {
           />
           <button type="submit">Save Boss profile</button>
         </form>
-        <p className="muted">Boss profile is stored in Firestore under <code>boss/primary</code>.</p>
       </section>
 
       <section className="card">
@@ -133,20 +132,6 @@ const AdminPage = () => {
             onChange={(event) => setPlayerPasscode(event.target.value)}
             required
           />
-
-          <label htmlFor="player-preferred-arena">Preferred Arena</label>
-          <select
-            id="player-preferred-arena"
-            value={playerPreferredArena}
-            onChange={(event) => setPlayerPreferredArena(event.target.value)}
-          >
-            <option value="">No preference</option>
-            {arenas.map((arena) => (
-              <option key={arena.id} value={arena.id}>
-                {arena.name}
-              </option>
-            ))}
-          </select>
 
           <button type="submit">Create Player</button>
         </form>
@@ -170,8 +155,33 @@ const AdminPage = () => {
             onChange={(event) => setArenaDescription(event.target.value)}
           />
 
+          <label htmlFor="arena-capacity">Capacity (optional)</label>
+          <input
+            id="arena-capacity"
+            type="number"
+            value={arenaCapacity}
+            onChange={(event) => setArenaCapacity(event.target.value)}
+            min="0"
+          />
+
           <button type="submit">Create Arena</button>
         </form>
+      </section>
+
+      <section className="card">
+        <h2>Current Players</h2>
+        {players.length === 0 ? (
+          <p>No players created yet.</p>
+        ) : (
+          <ul>
+            {players.map((p) => (
+              <li key={p.id}>
+                {p.codename}
+                {p.passcode ? <span className="muted"> — passcode: {p.passcode}</span> : null}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="card">
@@ -182,25 +192,12 @@ const AdminPage = () => {
           <ul>
             {arenas.map((arena) => (
               <li key={arena.id}>
-                {arena.name} — {arena.description || "No description"}
+                {arena.name}
+                {arena.description ? ` — ${arena.description}` : ""}
+                {arena.capacity ? ` (capacity ${arena.capacity})` : ""}
               </li>
             ))}
           </ul>
-        )}
-      </section>
-
-      <section className="card">
-        <h2>Leaderboard Snapshot</h2>
-        {leaderboard.length === 0 ? (
-          <p>Leaderboard will populate once matches start.</p>
-        ) : (
-          <ol>
-            {leaderboard.map((entry) => (
-              <li key={entry.id}>
-                {entry.playerId}: {entry.wins}W / {entry.losses}L (streak {entry.streak})
-              </li>
-            ))}
-          </ol>
         )}
       </section>
     </main>
