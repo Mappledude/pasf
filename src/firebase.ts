@@ -256,15 +256,27 @@ export const getArena = async (arenaId: string): Promise<Arena | null> => {
   } as Arena;
 };
 
-export const joinArena = async (arenaId: string, playerId: string, codename: string) => {
-  await setDoc(doc(db, `arenas/${arenaId}/presence/${playerId}`), {
+export const joinArena = async (
+  arenaId: string,
+  presenceId: string,
+  codename: string,
+  profileId?: string,
+) => {
+  const ref = doc(db, `arenas/${arenaId}/presence/${presenceId}`);
+  const data: Record<string, unknown> = {
+    playerId: presenceId,
+    authUid: presenceId,
     codename,
     joinedAt: serverTimestamp(),
-  });
+  };
+  if (profileId) {
+    data.profileId = profileId;
+  }
+  await setDoc(ref, data, { merge: true });
 };
 
-export const leaveArena = async (arenaId: string, playerId: string) => {
-  await deleteDoc(doc(db, `arenas/${arenaId}/presence/${playerId}`));
+export const leaveArena = async (arenaId: string, presenceId: string) => {
+  await deleteDoc(doc(db, `arenas/${arenaId}/presence/${presenceId}`));
 };
 
 export const watchArenaPresence = (
@@ -279,9 +291,11 @@ export const watchArenaPresence = (
     const players = snapshot.docs.map((docSnap) => {
       const data = docSnap.data() as any;
       return {
-        playerId: docSnap.id,
+        playerId: data.playerId ?? docSnap.id,
         codename: data.codename ?? "Agent",
         joinedAt: data.joinedAt?.toDate?.().toISOString?.(),
+        authUid: data.authUid ?? docSnap.id,
+        profileId: data.profileId,
       } as ArenaPresenceEntry;
     });
     cb(players);
