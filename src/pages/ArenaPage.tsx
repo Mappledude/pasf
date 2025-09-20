@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Phaser from "phaser";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -14,11 +14,37 @@ import { disposeActionBus, initActionBus, publishInput } from "../net/ActionBus"
 import type { Arena, ArenaPresenceEntry } from "../types/models";
 import { makeGame } from "../game/phaserGame";
 import ArenaScene from "../game/arena/ArenaScene";
+import { applyActions, getSnapshot, initSim } from "../sim/reducer";
+import type { ActionDoc, InputFlags, Sim, Snapshot } from "../sim/types";
 
 const CANVAS_WIDTH = 960;
 const CANVAS_HEIGHT = 540;
 const SPAWN_A = { x: 240, y: 360 } as const;
 const SPAWN_B = { x: 720, y: 360 } as const;
+const SIM_OPPONENT_ID = "remote-opponent";
+const MAX_FRAME_DT = 100;
+
+type RendererPlayerState = {
+  x: number;
+  y: number;
+  hp: number;
+  dir: -1 | 1;
+};
+
+type RendererSnapshot = {
+  tick: number;
+  tMs: number;
+  me: RendererPlayerState;
+  opp?: RendererPlayerState;
+};
+
+function hashSeed(key: string): number {
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) % 2147483647;
+  }
+  return hash || 1;
+}
 
 const ArenaPage: React.FC = () => {
   const { arenaId } = useParams<{ arenaId: string }>();
@@ -174,6 +200,84 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
   const initKeyRef = useRef<string | null>(null);
   const [stateReady, setStateReady] = useState(false);
   const [busReady, setBusReady] = useState(false);
+  const simRef = useRef<Sim | null>(null);
+  const pendingActionsRef = useRef<ActionDoc[]>([]);
+  const localSeqRef = useRef(0);
+  const remoteSourceRef = useRef<string | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const lastFrameRef = useRef<number | null>(null);
+  const renderStateRef = useRef<RendererSnapshot>({
+    tick: 0,
+    tMs: 0,
+    me: { x: SPAWN_A.x, y: SPAWN_A.y, hp: 100, dir: 1 },
+  });
+  const simOverlayRef = useRef<HTMLDivElement | null>(null);
+
+  const queueLocalAction = useCallback(
+    (input: InputFlags) => {
+      const sim = simRef.current;
+      if (!sim) return;
+      const seq = (localSeqRef.current += 1);
+      pendingActionsRef.current.push({
+        arenaId,
+        playerId: sim.myId,
+        seq,
+        input: {
+          left: !!input.left,
+          right: !!input.right,
+          jump: !!input.jump,
+          attack: !!input.attack,
+        },
+        clientTs: Date.now(),
+      });
+    },
+    [arenaId],
+  );
+
+  const updateRenderState = useCallback(
+    (snapshot: Snapshot, sim: Sim) => {
+      const state = renderStateRef.current;
+      state.tick = snapshot.tick;
+      state.tMs = snapshot.tMs;
+
+      const myState = snapshot.players[sim.myId];
+      if (myState) {
+        state.me.x = myState.pos.x;
+        state.me.y = myState.pos.y;
+        state.me.hp = myState.hp;
+        state.me.dir = myState.dir;
+      }
+
+      const oppState = snapshot.players[sim.oppId];
+      if (oppState) {
+        let oppTarget = state.opp;
+        if (!oppTarget) {
+          oppTarget = { x: 0, y: 0, hp: 100, dir: 1 };
+          state.opp = oppTarget;
+        }
+        oppTarget.x = oppState.pos.x;
+        oppTarget.y = oppState.pos.y;
+        oppTarget.hp = oppState.hp;
+        oppTarget.dir = oppState.dir;
+      } else {
+        state.opp = undefined;
+      }
+
+      if (simOverlayRef.current) {
+        const meState = state.me;
+        const opp = state.opp;
+        const parts = [
+          `SIM t=${state.tick}`,
+          `me(${meState.x.toFixed(1)},${meState.y.toFixed(1)}) hp=${meState.hp}`,
+        ];
+        if (opp) {
+          parts.push(`opp(${opp.x.toFixed(1)},${opp.y.toFixed(1)}) hp=${opp.hp}`);
+        }
+        simOverlayRef.current.textContent = parts.join(" | ");
+      }
+    },
+    [],
+  );
 
   const spawn = useMemo(() => {
     const ids = presence.map((p) => p.playerId);
@@ -251,6 +355,33 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
 
   useEffect(() => {
     if (!stateReady || !networkId) {
+      simRef.current = null;
+      pendingActionsRef.current.length = 0;
+      remoteSourceRef.current = null;
+      lastFrameRef.current = null;
+      return;
+    }
+
+    const seed = hashSeed(arenaId);
+    const sim = initSim({ seed, myPlayerId: networkId, opponentId: SIM_OPPONENT_ID });
+    simRef.current = sim;
+    pendingActionsRef.current.length = 0;
+    remoteSourceRef.current = null;
+    localSeqRef.current = 0;
+    lastFrameRef.current = null;
+    const snapshot = getSnapshot(sim);
+    updateRenderState(snapshot, sim);
+
+    return () => {
+      simRef.current = null;
+      pendingActionsRef.current.length = 0;
+      remoteSourceRef.current = null;
+      lastFrameRef.current = null;
+    };
+  }, [arenaId, networkId, stateReady, updateRenderState]);
+
+  useEffect(() => {
+    if (!stateReady || !networkId) {
       setBusReady(false);
       disposeActionBus();
       return;
@@ -260,9 +391,25 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
     initActionBus({
       arenaId,
       playerId: networkId,
-      onRemoteAction: (action) => {
+      onRemoteActions: (actions) => {
         if (cancelled) return;
-        console.debug("[ArenaCanvas] remote action", action);
+        const queue = pendingActionsRef.current;
+        actions.forEach((action) => {
+          if (!remoteSourceRef.current) {
+            remoteSourceRef.current = action.playerId;
+          }
+          if (remoteSourceRef.current !== action.playerId) {
+            return;
+          }
+          queue.push({
+            arenaId: action.arenaId,
+            playerId: SIM_OPPONENT_ID,
+            seq: action.seq,
+            input: action.input,
+            clientTs: action.clientTs,
+            createdAt: action.createdAt,
+          });
+        });
       },
     })
       .then(() => {
@@ -309,7 +456,14 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
       if (!action) return;
       if (keyState[action] === pressed) return;
       keyState[action] = pressed;
-      publishInput({ ...keyState });
+      const payload: InputFlags = {
+        left: keyState.left,
+        right: keyState.right,
+        jump: keyState.jump,
+        attack: keyState.attack,
+      };
+      queueLocalAction(payload);
+      publishInput(payload);
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -328,7 +482,60 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [busReady]);
+  }, [busReady, queueLocalAction]);
+
+  useEffect(() => {
+    if (!busReady || !simRef.current) {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      lastFrameRef.current = null;
+      return;
+    }
+
+    let active = true;
+
+    const step = (timestamp: number) => {
+      const sim = simRef.current;
+      if (!active || !sim) {
+        return;
+      }
+      const last = lastFrameRef.current ?? timestamp;
+      let dt = timestamp - last;
+      if (!Number.isFinite(dt) || dt < 0) {
+        dt = 0;
+      }
+      if (dt > MAX_FRAME_DT) {
+        dt = MAX_FRAME_DT;
+      }
+      lastFrameRef.current = timestamp;
+
+      const queue = pendingActionsRef.current;
+      let actions: ActionDoc[] = [];
+      if (queue.length > 0) {
+        actions = queue.slice();
+        queue.length = 0;
+      }
+
+      applyActions(sim, actions, dt);
+      const snapshot = getSnapshot(sim);
+      updateRenderState(snapshot, sim);
+
+      rafRef.current = requestAnimationFrame(step);
+    };
+
+    rafRef.current = requestAnimationFrame(step);
+
+    return () => {
+      active = false;
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      lastFrameRef.current = null;
+    };
+  }, [busReady, updateRenderState]);
 
   const gameReady = stateReady && !!gameRef.current;
 
@@ -360,6 +567,22 @@ const ArenaCanvas: React.FC<ArenaCanvasProps> = ({ arenaId, me, presence, networ
         >
           NET: 10Hz, dedupe ON
         </div>
+        <div
+          ref={simOverlayRef}
+          style={{
+            position: "absolute",
+            top: 36,
+            left: 8,
+            background: "rgba(59, 130, 246, 0.12)",
+            border: "1px solid rgba(59, 130, 246, 0.35)",
+            color: "#93c5fd",
+            fontSize: 12,
+            padding: "4px 8px",
+            borderRadius: 6,
+            pointerEvents: "none",
+            minWidth: 180,
+          }}
+        />
         {!gameReady ? (
           <div
             style={{
