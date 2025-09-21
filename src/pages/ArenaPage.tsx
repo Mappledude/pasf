@@ -14,6 +14,7 @@ import {
   type LeaderboardEntry,
 } from "../firebase";
 } from "../firebase";
+import { debugLog, debugWarn } from "../net/debug";
 import {
   ensureArenaState,
   watchArenaState,
