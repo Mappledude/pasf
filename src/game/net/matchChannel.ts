@@ -16,6 +16,7 @@ export interface MatchChannel {
 
 interface CreateMatchChannelOptions {
   arenaId: string;
+  presenceId: string;
 }
 
 export function createMatchChannel(options: CreateMatchChannelOptions): MatchChannel {

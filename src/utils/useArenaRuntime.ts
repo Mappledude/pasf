@@ -62,6 +62,22 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
   const writerLogRef = useRef<string | null>(null);
   const writerPersistRef = useRef<string | null>(null);
 
+  const mePresenceEntry = useMemo(() => {
+    if (!meUid) return null;
+    return (
+      presence.find((entry) => {
+        const entryUid = entry.authUid ?? entry.playerId;
+        return entryUid === meUid;
+      }) ?? null
+    );
+  }, [meUid, presence]);
+
+  const mePresenceId = useMemo(() => {
+    if (mePresenceEntry?.authUid) return mePresenceEntry.authUid;
+    if (mePresenceEntry?.playerId) return mePresenceEntry.playerId;
+    return meUid ?? null;
+  }, [mePresenceEntry?.authUid, mePresenceEntry?.playerId, meUid]);
+
   const activePresence = useMemo(() => {
     const now = Date.now();
     return presence.filter((entry) => {
@@ -201,7 +217,10 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
 
   useEffect(() => teardown, [teardown]);
 
-  const shouldBoot = useMemo(() => Boolean(arenaId && authReady && stateReady && meUid), [arenaId, authReady, stateReady, meUid]);
+  const shouldBoot = useMemo(
+    () => Boolean(arenaId && authReady && stateReady && meUid),
+    [arenaId, authReady, stateReady, meUid],
+  );
 
   useEffect(() => {
     if (!shouldBoot || !arenaId || !meUid) {
@@ -229,18 +248,23 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
   }, [arenaId, meUid, shouldBoot]);
 
   useEffect(() => {
-    if (!shouldBoot || !arenaId || !meUid) {
+    if (!shouldBoot || !arenaId || !mePresenceId) {
       disposeActionBus();
       return;
     }
 
-    const playerCodename = codename ?? meUid.slice(0, 6);
+    const playerCodename = codename ?? mePresenceId.slice(0, 6);
 
     let cancelled = false;
 
     (async () => {
       try {
-        await initActionBus({ arenaId, playerId: meUid, codename: playerCodename });
+        await initActionBus({
+          arenaId,
+          presenceId: mePresenceId,
+          authUid: meUid ?? undefined,
+          codename: playerCodename,
+        });
       } catch (error) {
         if (!cancelled && DEBUG) {
           console.warn("[ARENA] action bus init failed", error);
@@ -252,7 +276,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       cancelled = true;
       disposeActionBus();
     };
-  }, [arenaId, codename, meUid, shouldBoot]);
+  }, [arenaId, codename, mePresenceId, meUid, shouldBoot]);
 
   const writerUid = electedWriterUid;
   const isWriter = Boolean(meUid && writerUid && writerUid === meUid);
@@ -287,7 +311,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     let cancelled = false;
 
     const boot = async () => {
-      const playerId = meUid!;
+      const playerId = (mePresenceId ?? meUid)!;
       const playerCodename = codename ?? playerId.slice(0, 6);
       const spawn = { x: 240, y: 540 - 40 - 60 };
 

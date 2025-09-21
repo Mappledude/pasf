@@ -186,6 +186,8 @@ export type ArenaPlayerState = {
 
 export interface ArenaInputSnapshot {
   playerId: string;
+  presenceId: string;
+  authUid?: string;
   codename?: string;
   left?: boolean;
   right?: boolean;
@@ -666,8 +668,8 @@ export const watchArenaPresence = (
 const arenaStateDoc = (arenaId: string) =>
   doc(db, "arenas", arenaId, "state", "current");
 
-const arenaInputDoc = (arenaId: string, playerId: string) =>
-  doc(db, "arenas", arenaId, "inputs", playerId);
+const arenaInputDoc = (arenaId: string, presenceId: string) =>
+  doc(db, "arenas", arenaId, "inputs", presenceId);
 
 const arenaInputsCollection = (arenaId: string) =>
   collection(db, "arenas", arenaId, "inputs");
@@ -684,6 +686,8 @@ const serializeInputSnapshot = (snap: QueryDocumentSnapshot): ArenaInputSnapshot
   const data = snap.data() as Record<string, unknown>;
   return {
     playerId: (data.playerId as string) ?? snap.id,
+    presenceId: snap.id,
+    authUid: (data.authUid as string) ?? undefined,
     codename: (data.codename as string) ?? undefined,
     left: typeof data.left === "boolean" ? data.left : undefined,
     right: typeof data.right === "boolean" ? data.right : undefined,
@@ -749,6 +753,8 @@ export function watchArenaState(arenaId: string, cb: (state: any) => void) {
 }
 
 export interface ArenaInputWrite {
+  presenceId: string;
+  authUid?: string;
   left?: boolean;
   right?: boolean;
   jump?: boolean;
@@ -757,17 +763,17 @@ export interface ArenaInputWrite {
   attackSeq?: number;
 }
 
-export async function writeArenaInput(
-  arenaId: string,
-  playerId: string,
-  input: ArenaInputWrite,
-): Promise<void> {
+export async function writeArenaInput(arenaId: string, input: ArenaInputWrite): Promise<void> {
   await ensureAnonAuth();
-  const ref = arenaInputDoc(arenaId, playerId);
+  const ref = arenaInputDoc(arenaId, input.presenceId);
   const payload: Record<string, unknown> = {
-    playerId,
+    playerId: input.presenceId,
+    presenceId: input.presenceId,
     updatedAt: serverTimestamp(),
   };
+  if (typeof input.authUid === "string" && input.authUid.length > 0) {
+    payload.authUid = input.authUid;
+  }
   if (typeof input.left === "boolean") payload.left = input.left;
   if (typeof input.right === "boolean") payload.right = input.right;
   if (typeof input.jump === "boolean") payload.jump = input.jump;
@@ -777,9 +783,9 @@ export async function writeArenaInput(
   await setDoc(ref, payload, { merge: true });
 }
 
-export async function deleteArenaInput(arenaId: string, playerId: string): Promise<void> {
+export async function deleteArenaInput(arenaId: string, presenceId: string): Promise<void> {
   await ensureAnonAuth();
-  const ref = arenaInputDoc(arenaId, playerId);
+  const ref = arenaInputDoc(arenaId, presenceId);
   await deleteDoc(ref);
 }
 

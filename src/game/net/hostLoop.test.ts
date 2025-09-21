@@ -52,8 +52,24 @@ describe("startHostLoop combat", () => {
       ]);
 
       const commands: Record<string, ArenaInputSnapshot> = {
-        p1: { playerId: "p1", right: false, left: false, jump: false, attack: false, attackSeq: 0 },
-        p2: { playerId: "p2", right: false, left: false, jump: false, attack: false, attackSeq: 0 },
+        p1: {
+          playerId: "p1",
+          presenceId: "p1",
+          right: false,
+          left: false,
+          jump: false,
+          attack: false,
+          attackSeq: 0,
+        },
+        p2: {
+          playerId: "p2",
+          presenceId: "p2",
+          right: false,
+          left: false,
+          jump: false,
+          attack: false,
+          attackSeq: 0,
+        },
       };
 
       const pushInputs = () => {
