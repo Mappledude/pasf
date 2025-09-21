@@ -1,15 +1,15 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Phaser from "phaser";
-import { Link } from "react-router-dom";
 import { makeGame } from "../game/phaserGame";
 import TrainingScene from "../game/training/TrainingScene";
 
 const TrainingPage: React.FC = () => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
+  const [launched, setLaunched] = useState(false);
 
   useEffect(() => {
-    if (!containerRef.current) {
+    if (!launched || !containerRef.current) {
       return;
     }
 
@@ -18,7 +18,7 @@ const TrainingPage: React.FC = () => {
       width: 960,
       height: 540,
       parent: containerRef.current,
-      backgroundColor: "#0f1115",
+      backgroundColor: "#0a0a0a",
       physics: { default: "arcade", arcade: { gravity: { x: 0, y: 900 }, debug: false } },
       scene: [TrainingScene],
     };
@@ -31,18 +31,41 @@ const TrainingPage: React.FC = () => {
       gameRef.current?.destroy(true);
       gameRef.current = null;
     };
-  }, []);
+  }, [launched]);
+
+  const handleLaunch = () => {
+    setLaunched(true);
+  };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0f1115", color: "#e6e6e6" }}>
-      <div style={{ padding: "12px" }}>
-        <Link to="/" style={{ color: "#7dd3fc", textDecoration: "none" }}>
-          ← Lobby
-        </Link>
-        <h2 style={{ margin: "8px 0 12px 0" }}>Training</h2>
+    <section className="card">
+      <h1>Training Module</h1>
+      <p>Run solo drills in the monochrome dojo. Launch to spin up the local Phaser scene.</p>
+      <button type="button" className="button" onClick={handleLaunch} disabled={launched}>
+        {launched ? "Training Active" : "Launch Training"}
+      </button>
+      <div
+        ref={containerRef}
+        className="canvas-frame"
+        style={{
+          marginTop: 20,
+          minHeight: launched ? 540 : 220,
+          border: "1px solid var(--line)",
+          borderRadius: "var(--radius)",
+          background: "var(--bg-soft)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {!launched ? (
+          <span className="muted" style={{ fontFamily: "var(--font-mono)", letterSpacing: "0.04em" }}>
+            Canvas warms up once launched.
+          </span>
+        ) : null}
       </div>
-      <div ref={containerRef} style={{ display: "flex", justifyContent: "center" }} />
-    </div>
+      <div className="card-footer">[SIM] arcade physics · training scene</div>
+    </section>
   );
 };
 
