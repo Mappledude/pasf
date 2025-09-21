@@ -3,6 +3,8 @@
 ## Summary
 Player logins were failing intermittently and arena rosters were not updating in real time during lobby sessions. Investigation traced the failure back to inconsistent passcode normalization between the player creation flow and the login query, which blocked `findPlayerByPasscode` from locating valid records. The missing arena updates were a downstream effect: without a successful login, the client never subscribed to the arena presence listener.
 
+Fresh arenas were also missing an initial `/state/current` document, triggering a blank screen on `ArenaPage` until the first game tick wrote state. We now stamp the lobby state immediately after creating the arena so subscribers have data to consume on first load.
+
 ## Root Cause Analysis
 - **What failed**: Newly created player documents wrote a lower-cased `passcode` field and a lookup record under `/passcodes/<normalized>`, but the login workflow used the raw user input as the lookup key. Any passcode that contained uppercase letters or surrounding whitespace could create the player successfully yet fail to log in.
 - **Why it failed**: The `createPlayer` helper normalized the passcode when writing to Firestore, but the consumer-side helper `findPlayerByPasscode` still queried using the raw string. The UI layer in `AuthContext` likewise passed the raw input along. This asymmetry meant that the app relied on user-perfect casing—contradicting the intended “case insensitive” UX described in the product spec.
@@ -10,7 +12,7 @@ Player logins were failing intermittently and arena rosters were not updating in
 - **Detection**: QA reported that passcodes generated via the admin tools failed when entered with mixed case. Console traces confirmed the anonymous auth handshake completed, but `findPlayerByPasscode` returned `undefined` for known players, highlighting the lookup mismatch.
 
 ## Files Updated (with rationale)
-- `src/firebase.ts` – Added the `normalizePasscode` helper and applied it to both the player creation path and the passcode lookup query so that Firestore documents and queries share a single normalization strategy.
+- `src/firebase.ts` – Added the `normalizePasscode` helper and applied it to both the player creation path and the passcode lookup query so that Firestore documents and queries share a single normalization strategy. Seed the `/arenas/<id>/state/current` doc (tick `0`, phase `"lobby"`) immediately after creating an arena so viewers never subscribe to an empty collection. Logged the initialization via `[STATE] createArena <id> => lobby phase` and bubbled failures.
 - `src/context/AuthContext.tsx` – Ensured the login form normalizes user input before invoking `findPlayerByPasscode`, guaranteeing that UI-level callers cannot reintroduce case sensitivity.
 - `src/pages/HomePage.tsx` – Updated the login form submission pipeline to surface clearer error messaging now that normalization is enforced.
 - `src/hooks/useArenaPresence.ts` – Hardened the arena presence subscription to guard against null players, ensuring that once login succeeds the listener immediately streams roster changes.
@@ -26,6 +28,7 @@ Anon UID ygvJ2ZbTNzcq7l8q8IlTlt4ff4C3
 createPlayer("Specter", "ShadowBlade") => playerId: dG7ci5dDLJYbPE1l1x2U
 findPlayerByPasscode("shadowblade") => { id: "dG7ci5dDLJYbPE1l1x2U", codename: "Specter" }
 [auth] login success Specter (uid ygvJ2ZbTNzcq7l8q8IlTlt4ff4C3)
+[STATE] createArena QiWeh1f6Hsc3gvvREd6z => lobby phase
 [arena] subscribeArena("dojo-alpha") => initial roster: ["Specter"]
 [arena] roster update => ["Specter", "Mistral"]
 ```
@@ -33,6 +36,8 @@ findPlayerByPasscode("shadowblade") => { id: "dG7ci5dDLJYbPE1l1x2U", codename: "
 - Anonymous authentication now stabilizes before the player lookup executes.
 - Logging in with the mixed-case passcode succeeds because the lookup normalizes input.
 - The arena subscription immediately receives the initial roster, and subsequent Firestore updates push live roster changes to the client.
+- Creating a new arena now seeds `/state/current` instantly; the Firestore console shows `phase = "lobby"`, `tick = 0`, and `createdAt` populated before the UI subscribes.
+- Loading `ArenaPage` against a fresh arena no longer flashes the initialization error banner because the subscription receives the lobby snapshot immediately.
 
 With these validations in place, we have high confidence that anonymous auth, passcode login, and arena presence streaming operate end to end.
 
