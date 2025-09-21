@@ -275,11 +275,11 @@ const arenaTitle = arenaName ?? "Arena";
 
   useEffect(() => {
     setLeaderboardLoading(true);
+    setLeaderboardError(null);
     const unsubscribe = watchLeaderboard(
       (entries) => {
         setLeaderboard(entries);
         setLeaderboardLoading(false);
-        setLeaderboardError(null);
       },
       () => {
         setLeaderboardError("Failed to load leaderboard.");
