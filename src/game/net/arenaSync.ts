@@ -25,9 +25,34 @@ export type ArenaPlayerFrame = {
   grounded?: boolean;
 };
 
+export type ArenaEntityFrame = {
+  kind?: string;
+  playerId?: string;
+  codename?: string;
+  pos?: { x?: number; y?: number };
+  vel?: { x?: number; y?: number };
+  dir?: -1 | 1;
+  facing?: "L" | "R";
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  hp?: number;
+  anim?: string;
+  attackActiveUntil?: number;
+  canAttackAt?: number;
+  grounded?: boolean;
+  presenceExpireAt?: unknown;
+  presence?: { expireAt?: unknown };
+  updatedAt?: unknown;
+};
+
 export type ArenaStateSnapshot = {
   tick?: number;
+  tMs?: number;
+  writerUid?: string;
   phase?: ArenaPhase;
+  entities?: Record<string, ArenaEntityFrame | undefined>;
   players?: Record<string, ArenaPlayerFrame | undefined>;
   lastEvent?: ArenaLastEvent;
 };
