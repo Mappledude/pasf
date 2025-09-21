@@ -15,6 +15,7 @@ const ArenaListItem = ({ arena, onJoin }: ArenaListItemProps) => {
 // seatless roster (Lobby card)
 const { loading: presenceLoading } = useArenaPresence(arena.id);
 const { names: rosterNames, count: rosterCount } = usePresenceRoster(arena.id);
+const overflow = Math.max(0, rosterCount - rosterNames.length);
 
 const overflow = Math.max(rosterCount - rosterNames.length, 0);
 
@@ -50,7 +51,12 @@ React.useEffect(() => {
       {presenceLoading ? (
         <span className="skel" style={{ width: 160, height: 16, display: "block", marginTop: 8 }} />
       ) : rosterNames.length ? (
-        <div className="chips" style={{ marginTop: 8 }}>
+        <div
+          className="chips"
+          style={{ marginTop: 8 }}
+          aria-label={formattedRoster || undefined}
+          title={formattedRoster || undefined}
+        >
           {rosterNames.map((name, index) => (
             <span className="chip" key={`${name}-${index}`}>
               {name}
