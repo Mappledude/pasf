@@ -228,3 +228,23 @@ const AdminPage = () => {
         <h2>Current Arenas</h2>
         {arenasError ? (
           <p>Failed to load arenas.</p>
+        ) : arenasLoading ? (
+          <p>Loading arenas…</p>
+        ) : arenas.length === 0 ? (
+          <p>No arenas created yet.</p>
+        ) : (
+          <ul>
+            {arenas.map((arena) => (
+              <li key={arena.id}>
+                <strong>{arena.name}</strong>
+                {arena.description ? <span className="muted"> — {arena.description}</span> : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </main>
+  );
+};
+
+export default AdminPage;
