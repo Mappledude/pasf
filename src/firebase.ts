@@ -151,6 +151,13 @@ export interface ArenaPresenceEntry {
   joinedAt?: ISODate;
 }
 
+export interface ArenaSeatAssignment {
+  seatNo: number;
+  playerId: string;
+  uid: string;
+  joinedAt?: ISODate;
+}
+
 export type ArenaPlayerState = {
   codename: string;
   x: number;
@@ -393,6 +400,108 @@ export const joinArena = async (
 
 export const leaveArena = async (arenaId: string, presenceId: string) => {
   await deleteDoc(doc(db, `arenas/${arenaId}/presence/${presenceId}`));
+};
+
+const seatDoc = (arenaId: string, seatNo: number) =>
+  doc(db, `arenas/${arenaId}/seats/${seatNo}`);
+
+const normalizeSeatPlayerId = (playerId: string | null | undefined, uid: string) =>
+  playerId && playerId.trim().length > 0 ? playerId : uid;
+
+export const claimArenaSeat = async (
+  arenaId: string,
+  seatNo: number,
+  identity: { playerId?: string | null; uid: string },
+) => {
+  await ensureAnonAuth();
+  const seatId = `${seatNo}`;
+  const playerId = normalizeSeatPlayerId(identity.playerId, identity.uid);
+  const seatRef = seatDoc(arenaId, seatNo);
+  const seatsCollection = collection(db, `arenas/${arenaId}/seats`);
+  const seatSnapshot = await getDocs(seatsCollection);
+  const seatRefs = seatSnapshot.docs.map((snap) => snap.ref);
+
+  await runTransaction(db, async (tx) => {
+    const currentSnap = await tx.get(seatRef);
+    if (currentSnap.exists()) {
+      const data = currentSnap.data() as any;
+      const alreadyMine =
+        data?.uid === identity.uid || (playerId && data?.playerId === playerId);
+      if (!alreadyMine) {
+        throw new Error("Seat is already occupied.");
+      }
+    }
+
+    for (const ref of seatRefs) {
+      if (ref.id === seatId) continue;
+      const otherSnap = await tx.get(ref);
+      if (!otherSnap.exists()) continue;
+      const data = otherSnap.data() as any;
+      const matchesUid = data?.uid === identity.uid;
+      const matchesPlayer = playerId && data?.playerId === playerId;
+      if (matchesUid || matchesPlayer) {
+        tx.delete(ref);
+      }
+    }
+
+    tx.set(
+      seatRef,
+      {
+        playerId,
+        uid: identity.uid,
+        joinedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+  });
+};
+
+export const releaseArenaSeat = async (
+  arenaId: string,
+  seatNo: number,
+  identity?: { playerId?: string | null; uid: string },
+) => {
+  await ensureAnonAuth();
+  const seatRef = seatDoc(arenaId, seatNo);
+  const playerId = identity ? normalizeSeatPlayerId(identity.playerId, identity.uid) : null;
+
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(seatRef);
+    if (!snap.exists()) return;
+    const data = snap.data() as any;
+    if (identity) {
+      const matchesUid = data?.uid === identity.uid;
+      const matchesPlayer = playerId && data?.playerId === playerId;
+      if (!matchesUid && !matchesPlayer) {
+        return;
+      }
+    }
+    tx.delete(seatRef);
+  });
+};
+
+export const watchArenaSeats = (
+  arenaId: string,
+  cb: (seats: ArenaSeatAssignment[]) => void,
+): Unsubscribe => {
+  const seatsRef = collection(db, `arenas/${arenaId}/seats`);
+  return onSnapshot(seatsRef, (snapshot) => {
+    const seats = snapshot.docs
+      .map((docSnap) => {
+        const data = docSnap.data() as any;
+        const seatNo = Number.parseInt(docSnap.id, 10);
+        if (Number.isNaN(seatNo)) return null;
+        return {
+          seatNo,
+          playerId: data?.playerId ?? "",
+          uid: data?.uid ?? "",
+          joinedAt: data?.joinedAt?.toDate?.().toISOString?.(),
+        } as ArenaSeatAssignment;
+      })
+      .filter((seat): seat is ArenaSeatAssignment => !!seat)
+      .sort((a, b) => a.seatNo - b.seatNo);
+    cb(seats);
+  });
 };
 
 export const watchArenaPresence = (
