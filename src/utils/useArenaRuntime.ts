@@ -5,7 +5,8 @@ import { initArenaPlayerState } from "../firebase";
 import { makeGame } from "../game/phaserGame";
 import ArenaScene, { type ArenaSceneConfig } from "../game/arena/ArenaScene";
 import { startHostLoop, type HostLoopController } from "../game/net/hostLoop";
-import { disposeActionBus } from "../net/ActionBus";
+import { initActionBus, disposeActionBus } from "../net/ActionBus";
+import { createKeyBinder } from "../game/input/KeyBinder";
 import type { ArenaPresenceEntry } from "../types/models";
 
 const DEBUG = import.meta.env.DEV && import.meta.env.VITE_DEBUG_ARENA_PAGE === "true";
@@ -43,6 +44,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
   const cleanupRef = useRef<(() => void) | null>(null);
   const hostLoopRef = useRef<HostLoopController | null>(null);
   const hostContextRef = useRef<string | null>(null);
+  const keyBinderRef = useRef<ReturnType<typeof createKeyBinder> | null>(null);
   const [gameBooted, setGameBooted] = useState(false);
 
   const teardown = useCallback(() => {
@@ -67,6 +69,11 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     }
     hostContextRef.current = null;
 
+    if (keyBinderRef.current) {
+      keyBinderRef.current.dispose();
+      keyBinderRef.current = null;
+    }
+
     disposeActionBus();
     setGameBooted(false);
   }, []);
@@ -74,6 +81,57 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
   useEffect(() => teardown, [teardown]);
 
   const shouldBoot = useMemo(() => Boolean(arenaId && authReady && stateReady && meUid), [arenaId, authReady, stateReady, meUid]);
+
+  useEffect(() => {
+    if (!shouldBoot || !arenaId || !meUid) {
+      if (keyBinderRef.current) {
+        keyBinderRef.current.dispose();
+        keyBinderRef.current = null;
+      }
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!keyBinderRef.current) {
+      keyBinderRef.current = createKeyBinder(window);
+    }
+
+    return () => {
+      if (keyBinderRef.current) {
+        keyBinderRef.current.dispose();
+        keyBinderRef.current = null;
+      }
+    };
+  }, [arenaId, meUid, shouldBoot]);
+
+  useEffect(() => {
+    if (!shouldBoot || !arenaId || !meUid) {
+      disposeActionBus();
+      return;
+    }
+
+    const playerCodename = codename ?? meUid.slice(0, 6);
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        await initActionBus({ arenaId, playerId: meUid, codename: playerCodename });
+      } catch (error) {
+        if (!cancelled && DEBUG) {
+          console.warn("[ARENA] action bus init failed", error);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      disposeActionBus();
+    };
+  }, [arenaId, codename, meUid, shouldBoot]);
 
   const hostEntry = useMemo(() => {
     if (!presence.length) return null;
@@ -234,4 +292,3 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
 
   return { gameBooted };
 }
-

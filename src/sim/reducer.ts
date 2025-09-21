@@ -390,7 +390,9 @@ export function applyActions(sim: Sim, actions: ActionDoc[], dtMs: number): void
 
   for (const action of relevantActions) {
     const previous = internal._inputs[action.playerId] ?? {};
-    internal._inputs[action.playerId] = { ...previous, ...action.input };
+    const merged = { ...previous, ...action.input };
+    internal._inputs[action.playerId] = merged;
+    console.log(`[SIM] move applied player=${action.playerId}`, merged);
     const current = internal._lastAppliedSeq[action.playerId] ?? 0;
     if (action.seq > current) {
       internal._lastAppliedSeq[action.playerId] = action.seq;

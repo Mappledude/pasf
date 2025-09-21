@@ -62,6 +62,10 @@ export function createKeyBinder(target: Window = window) {
   };
 
   const down = (e: KeyboardEvent) => {
+    console.log(`[INPUT] keydown code=${e.code}`);
+    if (e.code.startsWith("Arrow") || e.code === "Space") {
+      e.preventDefault();
+    }
     switch (e.code) {
       case "KeyA":
       case "ArrowLeft":
@@ -91,6 +95,9 @@ export function createKeyBinder(target: Window = window) {
   };
 
   const up = (e: KeyboardEvent) => {
+    if (e.code.startsWith("Arrow") || e.code === "Space") {
+      e.preventDefault();
+    }
     switch (e.code) {
       case "KeyA":
       case "ArrowLeft":
@@ -119,8 +126,8 @@ export function createKeyBinder(target: Window = window) {
     }
   };
 
-  target.addEventListener("keydown", down);
-  target.addEventListener("keyup", up);
+  target.addEventListener("keydown", down, { passive: false });
+  target.addEventListener("keyup", up, { passive: false });
 
   const dispose = () => {
     target.removeEventListener("keydown", down);

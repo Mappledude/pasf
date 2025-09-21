@@ -1,3 +1,4 @@
+import { publishInput } from "../../net/ActionBus";
 import { createArenaPeerService, type ArenaPeerService, type ArenaStateSnapshot } from "./arenaSync";
 
 export type AuthoritativeSnapshot = ArenaStateSnapshot;
@@ -32,8 +33,14 @@ export function createMatchChannel(options: CreateMatchChannelOptions): MatchCha
   };
 
   return {
-    publishInputs() {
-      // Networking bridge not yet implemented; clients rely on peer snapshots only.
+    publishInputs(payload) {
+      publishInput({
+        left: !!payload.left,
+        right: !!payload.right,
+        jump: !!payload.jump || !!payload.up,
+        attack: !!payload.attack || !!payload.attack1 || !!payload.attack2,
+        codename: typeof payload.codename === "string" ? payload.codename : undefined,
+      });
     },
     onSnapshot(cb) {
       snapshotListeners.add(cb);
