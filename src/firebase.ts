@@ -797,6 +797,12 @@ export async function writeArenaInput(
   await setDoc(ref, payload, { merge: true });
 }
 
+export async function deleteArenaInput(arenaId: string, playerId: string): Promise<void> {
+  await ensureAnonAuth();
+  const ref = arenaInputDoc(arenaId, playerId);
+  await deleteDoc(ref);
+}
+
 export async function fetchArenaInputs(arenaId: string): Promise<ArenaInputSnapshot[]> {
   await ensureAnonAuth();
   const snapshot = await getDocs(arenaInputsCollection(arenaId));
