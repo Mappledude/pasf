@@ -76,6 +76,7 @@ async function sendInput(state: ActionBusState, payload: NormalizedInput) {
   state.lastSentPayload = cloneNormalized(payload);
   state.lastSendAt = Date.now();
   state.pendingPayload = undefined;
+
   try {
     await writeArenaInput(state.arenaId, state.playerId, toWritePayload(payload, state.codename));
   } catch (error) {
@@ -84,30 +85,26 @@ async function sendInput(state: ActionBusState, payload: NormalizedInput) {
 }
 
 function scheduleSend(state: ActionBusState, payload: NormalizedInput) {
-  if (inputsEqual(state.lastSentPayload, payload)) {
-    return;
-  }
+  if (inputsEqual(state.lastSentPayload, payload)) return;
 
   const now = Date.now();
   const elapsed = now - state.lastSendAt;
+
   if (elapsed >= THROTTLE_MS && !state.pendingTimer) {
     void sendInput(state, payload);
     return;
   }
 
   state.pendingPayload = cloneNormalized(payload);
+
   if (!state.pendingTimer) {
     const delay = Math.max(THROTTLE_MS - elapsed, 0);
     state.pendingTimer = setTimeout(() => {
       state.pendingTimer = undefined;
       const toSend = state.pendingPayload;
       state.pendingPayload = undefined;
-      if (!toSend) {
-        return;
-      }
-      if (inputsEqual(state.lastSentPayload, toSend)) {
-        return;
-      }
+      if (!toSend) return;
+      if (inputsEqual(state.lastSentPayload, toSend)) return;
       void sendInput(state, toSend);
     }, delay);
   }
@@ -128,7 +125,9 @@ export async function initActionBus(options: InitOptions): Promise<void> {
   };
 
   busState = state;
+
   try {
+    // Seed doc so host loop can read a known key immediately
     await writeArenaInput(options.arenaId, options.playerId, toWritePayload(defaultInput, options.codename));
   } catch (error) {
     console.warn("[NET] initial input publish skipped", error);
@@ -136,18 +135,14 @@ export async function initActionBus(options: InitOptions): Promise<void> {
 }
 
 export function publishInput(input: PlayerInput): void {
-  if (!busState || !busState.ready) {
-    return;
-  }
+  if (!busState || !busState.ready) return;
 
   if (input.codename) {
     busState.codename = input.codename;
   }
 
   const next = normalizeInput(input, busState.latestInput);
-  if (inputsEqual(busState.latestInput, next)) {
-    return;
-  }
+  if (inputsEqual(busState.latestInput, next)) return;
 
   busState.latestInput = cloneNormalized(next);
   scheduleSend(busState, next);

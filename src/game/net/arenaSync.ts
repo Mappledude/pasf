@@ -1,10 +1,11 @@
-import { watchArenaState, type ArenaPlayerState } from "../../firebase";
 import {
-  disposeActionBus,
-  initActionBus,
-  publishInput,
-  type PlayerInput,
-} from "../../net/ActionBus";
+  applyDamage,
+  respawnPlayer,
+  updateArenaPlayerState,
+  watchArenaState,
+  type ArenaPlayerState,
+} from "../../firebase";
+import { debugLog } from "../../net/debug";
 
 export type ArenaStateSnapshot = {
   tick?: number;
@@ -12,47 +13,132 @@ export type ArenaStateSnapshot = {
   players?: Record<string, (ArenaPlayerState & { updatedAt?: unknown }) | undefined>;
 };
 
-export interface ArenaSyncOptions {
+export interface ArenaHostOptions {
   arenaId: string;
   meId: string;
-  codename?: string;
 }
 
-export interface ArenaSync {
-  updateLocalState(input: PlayerInput): void;
-  subscribe(cb: (state: ArenaStateSnapshot | undefined) => void): () => void;
+export interface ArenaPeerOptions {
+  arenaId: string;
+}
+
+export interface ArenaHostService {
+  /** Queue partial local state; debounced to HOST_WRITE_INTERVAL_MS. */
+  setLocalState(partial: Partial<ArenaPlayerState>): void;
+  /** Host-side damage application (authoritative). */
+  applyDamage(targetPlayerId: string, amount: number): Promise<void>;
+  /** Host-side respawn for the local player. */
+  respawn(spawn: { x: number; y: number }): Promise<void>;
+  /** Stop timers and release resources. */
   destroy(): void;
 }
 
-export function createArenaSync(options: ArenaSyncOptions): ArenaSync {
-  const { arenaId, meId, codename } = options;
-  const listeners = new Set<(state: ArenaStateSnapshot | undefined) => void>();
+export interface ArenaPeerService {
+  /** Subscribe to authoritative arena snapshots. */
+  subscribe(cb: (state: ArenaStateSnapshot | undefined) => void): () => void;
+  /** Release listeners/resources. */
+  destroy(): void;
+}
 
+/** Target ~11 Hz authoritative writes from host. */
+export const HOST_WRITE_INTERVAL_MS = 90;
+
+const encoder = new TextEncoder();
+
+type PlayerStatePartial = Partial<ArenaPlayerState>;
+type Listener = (state: ArenaStateSnapshot | undefined) => void;
+
+function shallowEqualState(a: PlayerStatePartial | null, b: PlayerStatePartial | null): boolean {
+  if (!a || !b) return false;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    if ((a as Record<string, unknown>)[key] !== (b as Record<string, unknown>)[key]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Host: batches local partial state and writes authoritative player node into
+ * /arenas/{id}/state/current (via updateArenaPlayerState).
+ */
+export function createArenaHostService(options: ArenaHostOptions): ArenaHostService {
+  const { arenaId, meId } = options;
+
+  let destroyed = false;
+  let queued: PlayerStatePartial | null = null;
+  let lastSent: PlayerStatePartial | null = null;
+  let tick = 0;
+
+  const timer = setInterval(() => {
+    if (destroyed || !queued) return;
+
+    const next = queued;
+    queued = null;
+
+    if (shallowEqualState(lastSent, next)) return;
+
+    lastSent = { ...next };
+    tick += 1;
+
+    // Lightweight telemetry on payload size
+    const snapshot = { tick, players: { [meId]: next } };
+    const bytes = encoder.encode(JSON.stringify(snapshot)).length;
+    debugLog("[HOST] tick=%d wrote state (bytes=%d)", tick, bytes);
+
+    updateArenaPlayerState(arenaId, meId, next, { tick }).catch((err) => {
+      console.warn("[HOST] failed to write state", err);
+    });
+  }, HOST_WRITE_INTERVAL_MS);
+
+  return {
+    setLocalState(partial) {
+      if (destroyed) return;
+      queued = { ...(queued ?? {}), ...partial };
+    },
+    applyDamage(targetPlayerId, amount) {
+      return applyDamage(arenaId, targetPlayerId, amount);
+    },
+    respawn(spawn) {
+      return respawnPlayer(arenaId, meId, spawn);
+    },
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      clearInterval(timer);
+      queued = null;
+      lastSent = null;
+    },
+  };
+}
+
+/**
+ * Peer: subscribes to authoritative arena snapshot document and fans out to listeners.
+ */
+export function createArenaPeerService(options: ArenaPeerOptions): ArenaPeerService {
+  const { arenaId } = options;
+
+  const listeners = new Set<Listener>();
   let unsubscribe: (() => void) | null = null;
   let destroyed = false;
 
-  void initActionBus({ arenaId, playerId: meId, codename }).catch((err) => {
-    console.warn("[arenaSync] failed to init action bus", err);
-  });
-
   const ensureSubscription = () => {
-    if (unsubscribe || destroyed) return;
+    if (destroyed || unsubscribe) return;
     unsubscribe = watchArenaState(arenaId, (state) => {
+      if (destroyed) return;
+      const snapshot = state as ArenaStateSnapshot | undefined;
       listeners.forEach((listener) => {
         try {
-          listener(state as ArenaStateSnapshot | undefined);
+          listener(snapshot);
         } catch (err) {
-          console.warn("[arenaSync] listener error", err);
+          console.warn("[PEER] listener error", err);
         }
       });
     });
   };
 
   return {
-    updateLocalState(input: PlayerInput) {
-      if (destroyed) return;
-      publishInput({ ...input, codename });
-    },
     subscribe(cb) {
       if (destroyed) return () => undefined;
       listeners.add(cb);
@@ -66,13 +152,13 @@ export function createArenaSync(options: ArenaSyncOptions): ArenaSync {
       };
     },
     destroy() {
+      if (destroyed) return;
       destroyed = true;
       if (unsubscribe) {
         unsubscribe();
         unsubscribe = null;
       }
       listeners.clear();
-      disposeActionBus();
     },
   };
 }

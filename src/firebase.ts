@@ -481,22 +481,25 @@ export async function updateArenaPlayerState(
   arenaId: string,
   meId: string,
   partial: Partial<ArenaPlayerState>,
+  options?: { tick?: number },
 ) {
   await ensureAnonAuth();
   const ref = arenaStateDoc(arenaId);
-  await setDoc(
-    ref,
-    {
-      players: {
-        [meId]: {
-          ...partial,
-          updatedAt: serverTimestamp(),
-        },
+  const payload: Record<string, unknown> = {
+    players: {
+      [meId]: {
+        ...partial,
+        updatedAt: serverTimestamp(),
       },
-      lastUpdate: serverTimestamp(),
     },
-    { merge: true },
-  );
+    lastUpdate: serverTimestamp(),
+  };
+
+  if (typeof options?.tick === "number") {
+    payload.tick = options.tick;
+  }
+
+  await setDoc(ref, payload, { merge: true });
 }
 
 export function watchArenaState(arenaId: string, cb: (state: any) => void) {

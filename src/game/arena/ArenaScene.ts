@@ -130,10 +130,6 @@ export default class ArenaScene extends Phaser.Scene {
     const view = this.snapbuf.getInterpolated(this.time.now);
     if (!view) return;
 
-    // Optional phase/tick if present (for future HUD use)
-    // const phase = (view as any).phase ?? "play";
-    // const tick = (view as any).tick ?? 0;
-
     const players = view.players ?? {};
 
     // Me (local fighter visuals mirror authoritative state)
