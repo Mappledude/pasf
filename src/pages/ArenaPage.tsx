@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import Phaser from "phaser";
 import { useParams, useNavigate } from "react-router-dom";
 import Phaser from "phaser";
 import {
@@ -22,7 +21,7 @@ import { useArenaSeats } from "../utils/useArenaSeats";
 import { useAuth } from "../context/AuthContext";
 import { makeGame } from "../game/phaserGame";
 import ArenaScene, { type ArenaSceneConfig } from "../game/arena/ArenaScene";
-
+import TouchControls from "../game/input/TouchControls";
 
 export default function ArenaPage() {
   const { arenaId = "" } = useParams();
@@ -32,7 +31,8 @@ export default function ArenaPage() {
   const [state, setState] = useState<ArenaState | undefined>(undefined);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
-const [gameBooted, setGameBooted] = useState(false);
+  const [gameBooted, setGameBooted] = useState(false);
+  const [touchControlsEnabled, setTouchControlsEnabled] = useState(false);
 
   const { players: presence, loading: presenceLoading, error: presenceError } = useArenaPresence(arenaId);
   const { seats, loading: seatsLoading, error: seatsError } = useArenaSeats(arenaId);
@@ -41,6 +41,48 @@ const [gameBooted, setGameBooted] = useState(false);
   const [seatMessage, setSeatMessage] = useState<string | null>(null);
 
   type SeatEntry = (typeof seats)[number];
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const detectTouch = () => {
+      const nav = window.navigator as Navigator & {
+        maxTouchPoints?: number;
+        msMaxTouchPoints?: number;
+      };
+      const maxPoints = typeof nav.maxTouchPoints === "number" ? nav.maxTouchPoints : 0;
+      const navAny = nav as { msMaxTouchPoints?: number };
+      const msPoints = typeof navAny.msMaxTouchPoints === "number" ? navAny.msMaxTouchPoints : 0;
+      const coarse = window.matchMedia?.("(pointer: coarse)")?.matches ?? false;
+      const hasOntouch = "ontouchstart" in window;
+      const next = maxPoints > 0 || msPoints > 0 || coarse || hasOntouch;
+      setTouchControlsEnabled((prev) => (prev === next ? prev : next));
+    };
+
+    detectTouch();
+
+    const handleChange = () => detectTouch();
+    const pointerQuery = window.matchMedia?.("(pointer: coarse)");
+    if (pointerQuery?.addEventListener) {
+      pointerQuery.addEventListener("change", handleChange);
+    } else if (pointerQuery?.addListener) {
+      pointerQuery.addListener(handleChange);
+    }
+    window.addEventListener("orientationchange", handleChange);
+    window.addEventListener("touchstart", handleChange, { passive: true });
+
+    return () => {
+      if (pointerQuery?.removeEventListener) {
+        pointerQuery.removeEventListener("change", handleChange);
+      } else if (pointerQuery?.removeListener) {
+        pointerQuery.removeListener(handleChange);
+      }
+      window.removeEventListener("orientationchange", handleChange);
+      window.removeEventListener("touchstart", handleChange);
+    };
+  }, []);
 
   // Auto-init + subscribe
   useEffect(() => {
@@ -488,14 +530,15 @@ const [gameBooted, setGameBooted] = useState(false);
             placeItems: "center",
           }}
         >
-{!gameBooted && (
-  <div
-    className="muted"
-    style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)", textAlign: "center" }}
-  >
-    Arena scene boots once auth and /state/current are ready.
-  </div>
-)}
+          {!gameBooted && (
+            <div
+              className="muted"
+              style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)", textAlign: "center" }}
+            >
+              Arena scene boots once auth and /state/current are ready.
+            </div>
+          )}
+          {touchControlsEnabled && gameBooted ? <TouchControls /> : null}
 
         </div>
         <div className="card-footer">[NET] {debugFooter}</div>
