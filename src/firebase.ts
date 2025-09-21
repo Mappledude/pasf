@@ -142,16 +142,19 @@ export interface CreatePlayerInput {
   passcode: string;
 }
 
+export const normalizePasscode = (passcode: string) => passcode.trim().toLowerCase();
+
 export const createPlayer = async (input: CreatePlayerInput) => {
   await ensureAnonAuth();
   const playersRef = collection(db, "players");
   const now = serverTimestamp();
+  const normalizedPasscode = normalizePasscode(input.passcode);
   const pRef = await addDoc(playersRef, {
     codename: input.codename,
-    passcode: input.passcode,
+    passcode: normalizedPasscode,
     createdAt: now,
   });
-  await setDoc(doc(db, "passcodes", input.passcode), {
+  await setDoc(doc(db, "passcodes", normalizedPasscode), {
     playerId: pRef.id,
     createdAt: now,
   });
@@ -159,7 +162,8 @@ export const createPlayer = async (input: CreatePlayerInput) => {
 };
 
 export const findPlayerByPasscode = async (passcode: string) => {
-  const pc = await getDoc(doc(db, "passcodes", passcode));
+  const normalizedPasscode = normalizePasscode(passcode);
+  const pc = await getDoc(doc(db, "passcodes", normalizedPasscode));
   if (pc.exists()) {
     const playerId = (pc.data() as any).playerId as string;
     const pSnap = await getDoc(doc(db, "players", playerId));
@@ -174,7 +178,10 @@ export const findPlayerByPasscode = async (passcode: string) => {
       } as PlayerProfile;
     }
   }
-  const q = query(collection(db, "players"), where("passcode", "==", passcode));
+  const q = query(
+    collection(db, "players"),
+    where("passcode", "==", normalizedPasscode),
+  );
   const res = await getDocs(q);
   if (!res.empty) {
     const s = res.docs[0];

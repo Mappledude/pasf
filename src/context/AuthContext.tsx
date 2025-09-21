@@ -15,6 +15,7 @@ import {
   findPlayerByPasscode,
   updatePlayerActivity,
   maybeConnectEmulators,
+  normalizePasscode,
 } from "../firebase";
 import type { PlayerProfile } from "../types/models";
 
@@ -55,8 +56,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setLoading(true);
       try {
         await ensureAnonAuth();
-        const trimmed = passcode.trim();
-        const playerProfile = await findPlayerByPasscode(trimmed);
+        const normalizedPasscode = normalizePasscode(passcode);
+        const playerProfile = await findPlayerByPasscode(normalizedPasscode);
         if (!playerProfile) {
           throw new Error("Invalid passcode. Ask the Boss for access.");
         }

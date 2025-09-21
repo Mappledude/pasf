@@ -5,6 +5,7 @@ import {
   ensureBossProfile,
   listPlayers,
   ensureAnonAuth, // ✅ make sure we await auth before any Firestore calls
+  normalizePasscode,
 } from "../firebase";
 import type { PlayerProfile } from "../types/models";
 import { useArenas } from "../utils/useArenas";
@@ -77,9 +78,10 @@ const AdminPage = () => {
     setStatus(null);
     try {
       await ensureAnonAuth(); // ✅
+      const normalizedPasscode = normalizePasscode(playerPasscode);
       await createPlayer({
         codename: playerCodename,
-        passcode: playerPasscode,
+        passcode: normalizedPasscode,
       });
       setPlayerCodename("");
       setPlayerPasscode("");
@@ -228,3 +230,24 @@ const AdminPage = () => {
         <h2>Current Arenas</h2>
         {arenasError ? (
           <p>Failed to load arenas.</p>
+        ) : arenasLoading ? (
+          <p>Loading arenas...</p>
+        ) : arenas.length === 0 ? (
+          <p>No arenas yet.</p>
+        ) : (
+          <ul>
+            {arenas.map((arena) => (
+              <li key={arena.id}>
+                {arena.name}
+                {arena.description ? ` — ${arena.description}` : ""}
+                {arena.capacity ? ` (capacity ${arena.capacity})` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </main>
+  );
+};
+
+export default AdminPage;
