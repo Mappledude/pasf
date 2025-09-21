@@ -5,6 +5,7 @@ import {
   db,
   ensureAnonAuth,
   joinArena,
+  heartbeatArenaPresence,
   leaveArena,
   claimArenaSeat,       // remove if not used
   releaseArenaSeat,     // remove if not used
@@ -235,9 +236,15 @@ const arenaTitle = arenaName ?? "Arena";
       return fallback;
     };
 
-    const pushPresence = async () => {
+    const pushJoin = async () => {
       const nextDisplayName = await computeDisplayName();
       await joinArena(arenaId, uid, codename, profileId, nextDisplayName);
+      console.log(`[PRESENCE] joined uid=${uid}`);
+    };
+
+    const pushHeartbeat = async () => {
+      const nextDisplayName = await computeDisplayName();
+      await heartbeatArenaPresence(arenaId, uid, codename, profileId, nextDisplayName);
       console.log(`[HEARTBEAT] lastSeen updated uid=${uid}`);
     };
 
@@ -248,14 +255,14 @@ const arenaTitle = arenaName ?? "Arena";
         if (cancelled) return;
 
         debugLog("[PRESENCE] joinArena", { arenaId, uid, codename, profileId });
-        await pushPresence();
+        await pushJoin();
         if (cancelled) return;
 
         debugLog("[PRESENCE] join complete", { arenaId, uid });
 
         heartbeat = setInterval(() => {
           debugLog("[PRESENCE] heartbeat", { arenaId, uid });
-          pushPresence().catch((e) => {
+          pushHeartbeat().catch((e) => {
             debugWarn("[PRESENCE] heartbeat failed", e);
           });
         }, 10_000);

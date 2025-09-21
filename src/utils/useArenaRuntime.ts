@@ -45,6 +45,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
   const hostLoopRef = useRef<HostLoopController | null>(null);
   const hostContextRef = useRef<string | null>(null);
   const keyBinderRef = useRef<ReturnType<typeof createKeyBinder> | null>(null);
+  const hostLogRef = useRef<string | null>(null);
   const [gameBooted, setGameBooted] = useState(false);
 
   const teardown = useCallback(() => {
@@ -153,6 +154,25 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
   const hostAuthUid = hostEntry?.authUid ?? null;
   const hostPlayerId = hostEntry?.playerId ?? null;
   const isHost = Boolean(meUid && hostAuthUid && hostAuthUid === meUid);
+
+  useEffect(() => {
+    if (!arenaId) return;
+    const joinedAt = hostEntry?.joinedAt ?? null;
+    const logKey = hostEntry ? `${hostEntry.authUid ?? "(unknown)"}|${joinedAt ?? "(missing)"}` : "none";
+    if (hostLogRef.current === logKey) {
+      return;
+    }
+    hostLogRef.current = logKey;
+    if (DEBUG) {
+      if (!hostEntry) {
+        console.info(`[HOST] no active host for arena=${arenaId}`);
+      } else {
+        console.info(
+          `[HOST] elected authUid=${hostEntry.authUid ?? "(unknown)"} playerId=${hostEntry.playerId ?? "(unknown)"} joinedAt=${joinedAt ?? "(missing)"} lastSeen=${hostEntry.lastSeen ?? "(missing)"}`,
+        );
+      }
+    }
+  }, [arenaId, hostEntry, hostEntry?.authUid, hostEntry?.joinedAt, hostEntry?.lastSeen, hostEntry?.playerId]);
 
   useEffect(() => {
     if (!shouldBoot) {

@@ -421,12 +421,65 @@ export const joinArena = async (
   const trimmedDisplayName =
     typeof displayName === "string" && displayName.trim().length > 0 ? displayName.trim() : null;
   const playerId = profileId ?? presenceId;
+  const baseData: Record<string, unknown> = {
+    playerId,
+    authUid: presenceId,
+    arenaId,
+    codename,
+  };
+  if (profileId) {
+    baseData.profileId = profileId;
+  }
+  if (trimmedDisplayName) {
+    baseData.displayName = trimmedDisplayName;
+  }
+  const heartbeatData = {
+    lastSeen: serverTimestamp(),
+    expireAt: Timestamp.fromMillis(Date.now() + 45_000),
+  };
+
+  const logName = (trimmedDisplayName ?? codename ?? "Player").replace(/"/g, '\\"');
+
+  const existing = await getDoc(ref);
+  if (!existing.exists()) {
+    console.info(`[PRESENCE] join name="${logName}" uid=${presenceId} playerId=${playerId}`);
+    await setDoc(
+      ref,
+      {
+        ...baseData,
+        joinedAt: serverTimestamp(),
+        ...heartbeatData,
+      },
+      { merge: false },
+    );
+    return;
+  }
+
+  console.info(
+    `[PRESENCE] rejoin (preserving joinedAt) name="${logName}" uid=${presenceId} playerId=${playerId}`,
+  );
+  await updateDoc(ref, {
+    ...baseData,
+    ...heartbeatData,
+  });
+};
+
+export const heartbeatArenaPresence = async (
+  arenaId: string,
+  presenceId: string,
+  codename: string,
+  profileId?: string,
+  displayName?: string | null,
+) => {
+  const ref = doc(db, `arenas/${arenaId}/presence/${presenceId}`);
+  const trimmedDisplayName =
+    typeof displayName === "string" && displayName.trim().length > 0 ? displayName.trim() : null;
+  const playerId = profileId ?? presenceId;
   const data: Record<string, unknown> = {
     playerId,
     authUid: presenceId,
     arenaId,
     codename,
-    joinedAt: serverTimestamp(),
     lastSeen: serverTimestamp(),
     expireAt: Timestamp.fromMillis(Date.now() + 45_000),
   };
@@ -436,9 +489,20 @@ export const joinArena = async (
   if (trimmedDisplayName) {
     data.displayName = trimmedDisplayName;
   }
-  const logName = (trimmedDisplayName ?? codename ?? "Player").replace(/"/g, '\\"');
-  console.info(`[PRESENCE] join name="${logName}" uid=${presenceId} playerId=${playerId}`);
-  await setDoc(ref, data, { merge: true });
+
+  try {
+    await updateDoc(ref, data);
+  } catch (error) {
+    const code = (error as { code?: string } | null)?.code;
+    if (code === "not-found") {
+      console.info(
+        `[PRESENCE] heartbeat recovery uid=${presenceId} (presence missing, re-joining with fresh joinedAt)`,
+      );
+      await setDoc(ref, { ...data, joinedAt: serverTimestamp() });
+      return;
+    }
+    throw error;
+  }
 };
 
 export const leaveArena = async (arenaId: string, presenceId: string) => {
