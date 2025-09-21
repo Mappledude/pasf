@@ -33,7 +33,14 @@ service cloud.firestore {
 
     // IMPORTANT: arena state docs live at /arenas/{arenaId}/state/{stateId}
     match /arenas/{arenaId}/state/{stateId} {
-      allow read, write: if isSignedIn();
+      function hasMatchingWriterUid() {
+        return (request.resource != null && request.resource.data.writerUid == request.auth.uid)
+          || (resource != null && resource.data.writerUid == request.auth.uid);
+      }
+
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+        && (stateId != "current" || hasMatchingWriterUid());
     }
 
     // Players (existing)
