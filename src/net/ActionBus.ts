@@ -12,8 +12,9 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { debugLog } from "./debug";
 
-const THROTTLE_MS = 100;
+const THROTTLE_MS = 50;
 const LAST_SEQ_WRITE_INTERVAL = 1500;
 
 export interface PlayerInput {
@@ -118,6 +119,8 @@ async function sendAction(state: ActionBusState, payload: NormalizedInput) {
   state.lastSentPayload = cloneNormalized(payload);
   state.lastSendAt = Date.now();
   state.pendingPayload = undefined;
+
+  debugLog("[INPUT] upsert uid=%s pressed=%o", state.playerId, payload);
 
   const data = {
     arenaId: state.arenaId,

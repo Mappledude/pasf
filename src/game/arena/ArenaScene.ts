@@ -1,5 +1,13 @@
 import Phaser from "phaser";
-import { createArenaSync, type ArenaStateSnapshot, type ArenaSync } from "../net/arenaSync";
+import {
+  createArenaHostService,
+  createArenaPeerService,
+  HOST_WRITE_INTERVAL_MS,
+  type ArenaHostService,
+  type ArenaPeerService,
+  type ArenaStateSnapshot,
+} from "../net/arenaSync";
+import { debugLog } from "../../net/debug";
 import { Player } from "../entities/Player";
 import { RemoteOpponent } from "../entities/RemoteOpponent";
 
@@ -9,6 +17,18 @@ const GROUND_HEIGHT = 40;
 const DAMAGE_PER_HIT = 10;
 const DAMAGE_DEBOUNCE_MS = 120;
 const RESPAWN_DELAY_MS = 1500;
+
+type RemotePlayerSnapshot = {
+  tick: number;
+  receivedAt: number;
+  state: {
+    x: number;
+    y: number;
+    facing: "L" | "R";
+    hp: number;
+    codename: string;
+  };
+};
 
 export interface ArenaSceneConfig {
   arenaId: string;
@@ -30,12 +50,19 @@ export default class ArenaScene extends Phaser.Scene {
   private koTween?: Phaser.Tweens.Tween;
   private respawnTimer?: Phaser.Time.TimerEvent;
 
-  private sync?: ArenaSync;
+  private host?: ArenaHostService;
+  private peer?: ArenaPeerService;
   private unsubscribe?: () => void;
   private opponentId?: string;
   private lastHitAt = 0;
   private controlsLocked = false;
   private latestOpponentName = "";
+  private latestOpponentHp = 100;
+  private remoteSnapshots: {
+    previous?: RemotePlayerSnapshot;
+    latest?: RemotePlayerSnapshot;
+  } = {};
+  private lastSnapLogTick?: number;
 
   constructor() {
     super("Arena");
@@ -75,8 +102,9 @@ export default class ArenaScene extends Phaser.Scene {
     this.createHud();
     this.createKoText();
 
-    this.sync = createArenaSync({ arenaId: this.arenaId, meId: this.me.id });
-    this.unsubscribe = this.sync.subscribe(this.handleArenaState);
+    this.host = createArenaHostService({ arenaId: this.arenaId, meId: this.me.id });
+    this.peer = createArenaPeerService({ arenaId: this.arenaId });
+    this.unsubscribe = this.peer.subscribe(this.handleArenaState);
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.handleShutdown, this);
     this.events.once(Phaser.Scenes.Events.DESTROY, this.handleShutdown, this);
@@ -90,7 +118,7 @@ export default class ArenaScene extends Phaser.Scene {
 
     const body = this.player.body;
     const facing = this.player.facing === 1 ? "R" : "L";
-    this.sync?.updateLocalState({
+    this.host?.setLocalState({
       codename: this.me.codename,
       x: this.player.sprite.x,
       y: this.player.sprite.y,
@@ -100,6 +128,8 @@ export default class ArenaScene extends Phaser.Scene {
       anim: this.player.isAttackActive() ? "attack" : undefined,
       hp: this.player.hp,
     });
+
+    this.applyRemoteOpponentState();
   }
 
   private handleAttackOverlap = () => {
@@ -113,7 +143,7 @@ export default class ArenaScene extends Phaser.Scene {
     }
     this.lastHitAt = now;
 
-    this.sync?.applyDamage(this.opponentId, DAMAGE_PER_HIT).catch((err) => {
+    this.host?.applyDamage(this.opponentId, DAMAGE_PER_HIT).catch((err) => {
       console.warn("[ArenaScene] failed to apply damage", err);
     });
   };
@@ -140,6 +170,9 @@ export default class ArenaScene extends Phaser.Scene {
       this.opponentId = undefined;
       this.opponent?.setActive(false);
       this.latestOpponentName = "";
+      this.latestOpponentHp = 100;
+      this.remoteSnapshots = {};
+      this.lastSnapLogTick = undefined;
       this.updateHud();
       return;
     }
@@ -149,26 +182,73 @@ export default class ArenaScene extends Phaser.Scene {
 
     if (this.opponentId !== targetOpponentId) {
       this.opponentId = targetOpponentId;
-      this.opponent?.setCodename(opponentState.codename ?? "Agent");
       this.lastHitAt = 0;
+      this.remoteSnapshots = {};
+      this.lastSnapLogTick = undefined;
     }
 
-    const oppHp = typeof opponentState.hp === "number" ? opponentState.hp : this.opponent?.hp ?? 100;
-    const prevOppHp = this.opponent?.hp ?? oppHp;
-    this.opponent?.setState({
-      x: opponentState.x ?? this.spawn.x,
-      y: opponentState.y ?? this.spawn.y,
-      facing: opponentState.facing === "L" ? "L" : "R",
-      hp: oppHp,
-    });
+    const oppHp = typeof opponentState.hp === "number" ? opponentState.hp : this.latestOpponentHp;
+    const prevOppHp = this.latestOpponentHp;
+    this.latestOpponentHp = oppHp;
 
     if (prevOppHp > 0 && oppHp <= 0) {
       this.flashKo();
     }
 
-    this.latestOpponentName = opponentState.codename ?? "Agent";
+    const snapshot: RemotePlayerSnapshot = {
+      tick: typeof state?.tick === "number" ? state.tick : 0,
+      receivedAt: this.time.now,
+      state: {
+        x: opponentState.x ?? this.spawn.x,
+        y: opponentState.y ?? this.spawn.y,
+        facing: opponentState.facing === "L" ? "L" : "R",
+        hp: oppHp,
+        codename: opponentState.codename ?? "Agent",
+      },
+    };
+
+    if (this.remoteSnapshots.latest) {
+      this.remoteSnapshots.previous = this.remoteSnapshots.latest;
+    }
+    this.remoteSnapshots.latest = snapshot;
+    this.latestOpponentName = snapshot.state.codename;
     this.updateHud();
   };
+
+  private applyRemoteOpponentState() {
+    if (!this.opponent) return;
+    const latest = this.remoteSnapshots.latest;
+    if (!latest) return;
+
+    const previous = this.remoteSnapshots.previous;
+    const now = this.time.now;
+
+    let alpha = 1;
+    let x = latest.state.x;
+    let y = latest.state.y;
+    let hp = latest.state.hp;
+    let facing = latest.state.facing;
+
+    if (previous && previous.tick !== latest.tick) {
+      const elapsed = Math.max(0, now - latest.receivedAt);
+      alpha = Phaser.Math.Clamp(elapsed / HOST_WRITE_INTERVAL_MS, 0, 1);
+      x = Phaser.Math.Linear(previous.state.x, latest.state.x, alpha);
+      y = Phaser.Math.Linear(previous.state.y, latest.state.y, alpha);
+      hp = Phaser.Math.Linear(previous.state.hp, latest.state.hp, alpha);
+      facing = alpha < 0.5 ? previous.state.facing : latest.state.facing;
+    }
+
+    this.opponent.setCodename(latest.state.codename);
+    this.opponent.setState({ x, y, facing, hp });
+
+    if (alpha < 1) {
+      debugLog("[SNAP] apply t=%d lerp alpha=%.2f", latest.tick, alpha);
+      this.lastSnapLogTick = undefined;
+    } else if (this.lastSnapLogTick !== latest.tick) {
+      debugLog("[SNAP] apply t=%d lerp alpha=%.2f", latest.tick, alpha);
+      this.lastSnapLogTick = latest.tick;
+    }
+  }
 
   private onLocalKo() {
     if (!this.player || this.controlsLocked) return;
@@ -179,7 +259,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.respawnTimer?.remove(false);
     this.respawnTimer = this.time.delayedCall(RESPAWN_DELAY_MS, () => {
       if (!this.player) return;
-      this.sync?.respawn(this.spawn).catch((err) => console.warn("[ArenaScene] respawn failed", err));
+      this.host?.respawn(this.spawn).catch((err) => console.warn("[ArenaScene] respawn failed", err));
       this.player.setPosition(this.spawn.x, this.spawn.y);
       this.player.setHp(100);
       this.player.setControlsEnabled(true);
@@ -275,8 +355,10 @@ export default class ArenaScene extends Phaser.Scene {
     this.ground = undefined;
     this.koText?.destroy();
     this.koText = undefined;
-    this.sync?.destroy();
-    this.sync = undefined;
+    this.host?.destroy();
+    this.host = undefined;
+    this.peer?.destroy();
+    this.peer = undefined;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
   }
