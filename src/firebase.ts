@@ -19,7 +19,6 @@ import {
   collection,
   serverTimestamp,
   query,
-  where,
   orderBy,
   onSnapshot,
   runTransaction,
@@ -214,50 +213,52 @@ export const createPlayer = async (input: CreatePlayerInput) => {
   return playerRef.id;
 };
 
-export const findPlayerByPasscode = async (passcode: string) => {
-  const normalizedPasscode = normalizePasscode(passcode);
-  const pc = await getDoc(doc(db, "passcodes", normalizedPasscode));
-  if (pc.exists()) {
-    const playerId = (pc.data() as any).playerId as string;
-    const pSnap = await getDoc(doc(db, "players", playerId));
-    if (pSnap.exists()) {
-      const d = pSnap.data() as any;
-      return {
-        id: pSnap.id,
-        codename: d.codename,
-        createdAt: d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString(),
-        lastActiveAt: d.lastActiveAt?.toDate?.().toISOString?.(),
-      } as PlayerProfile;
-    }
-  }
-  const q = query(
-    collection(db, "players"),
-    where("passcode", "==", normalizedPasscode),
-  );
-  const res = await getDocs(q);
-  if (!res.empty) {
-    const s = res.docs[0];
-    const d = s.data() as any;
-    return {
-      id: s.id,
-      codename: d.codename,
-      createdAt: d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString(),
-      lastActiveAt: d.lastActiveAt?.toDate?.().toISOString?.(),
-    } as PlayerProfile;
-  }
-  return undefined;
+export const findPlayerByPasscode = async (
+  raw: string
+): Promise<PlayerProfile | undefined> => {
+  await ensureAnonAuth();
+  const code = normalizePasscode(raw);
+
+  // Look up passcodes/{code} -> { playerId }
+  const passSnap = await getDoc(doc(db, "passcodes", code));
+  if (!passSnap.exists()) return undefined;
+
+  const { playerId } = passSnap.data() as { playerId: string };
+  const pSnap = await getDoc(doc(db, "players", playerId));
+  if (!pSnap.exists()) return undefined;
+
+  const d = pSnap.data() as any;
+  return {
+    id: pSnap.id,
+    codename: d.codename,
+    createdAt: d.createdAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
+    lastActiveAt: d.lastActiveAt?.toDate?.()?.toISOString?.(),
+  } as PlayerProfile;
 };
 
 export const loginWithPasscode = async (passcode: string): Promise<PlayerProfile> => {
   const normalizedPasscode = normalizePasscode(passcode);
   console.info("[AUTH] loginWithPasscode start");
   await ensureAnonAuth();
-  const playerProfile = await findPlayerByPasscode(normalizedPasscode);
-  if (!playerProfile) {
+  const passcodeSnap = await getDoc(doc(db, "passcodes", normalizedPasscode));
+  if (!passcodeSnap.exists()) {
     throw new Error("Invalid passcode. Ask the Boss for access.");
   }
-  console.info(`[AUTH] loginWithPasscode ok ${playerProfile.id}`);
-  return playerProfile;
+
+  const { playerId } = passcodeSnap.data() as { playerId?: string };
+  if (!playerId) {
+    throw new Error("Invalid passcode. Ask the Boss for access.");
+  }
+
+  const playerSnap = await getDoc(doc(db, "players", playerId));
+  if (!playerSnap.exists()) {
+    throw new Error("Invalid passcode. Ask the Boss for access.");
+  }
+
+  const { passcode: _ignoredPasscode, ...playerData } = playerSnap.data() ?? {};
+  const profile = { id: playerSnap.id, ...playerData } as PlayerProfile;
+  console.info(`[AUTH] loginWithPasscode ok ${profile.id}`);
+  return profile;
 };
 export const listPlayers = async (): Promise<PlayerProfile[]> => {
   await ensureAnonAuth();
