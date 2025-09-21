@@ -17,8 +17,8 @@ service cloud.firestore {
       }
     }
 
-    // IMPORTANT: single state doc at /arenas/{arenaId}/state
-    match /arenas/{arenaId}/state {
+    // IMPORTANT: arena state docs live at /arenas/{arenaId}/state/{stateId}
+    match /arenas/{arenaId}/state/{stateId} {
       allow read, write: if isSignedIn();
     }
 

@@ -35,3 +35,6 @@ findPlayerByPasscode("shadowblade") => { id: "dG7ci5dDLJYbPE1l1x2U", codename: "
 - The arena subscription immediately receives the initial roster, and subsequent Firestore updates push live roster changes to the client.
 
 With these validations in place, we have high confidence that anonymous auth, passcode login, and arena presence streaming operate end to end.
+
+## Deployment Notes
+- After updating the Firestore security rules, remember to publish them to the production project by running `firebase deploy --only firestore:rules --project stickfightpa`.
