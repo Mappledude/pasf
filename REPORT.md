@@ -117,6 +117,14 @@ This report enumerates the gaps between the current lobby scaffold and the "From
   2. Create TODO slots for each fighter animation state (idle, run, jump, punch, kick, hit, KO) with expected resolution, pivot, and naming (e.g., `fighter-idle.png`) so sprite sheets can drop in without Phaser code churn.
   3. Ship an asset manifest (JSON or TS module) under `src/game/arena/` that declares the sprite keys required by the loader so QA can quickly confirm when all art milestones are met.
 
+## Presence / Name Mapping
+- **Root cause**
+  - Presence documents did not persist a human-readable `displayName`, so the client fell back to truncated UIDs/profile IDs when rendering chips and seat labels.
+  - There was no shared resolver to hydrate player names, leading to duplicate lookups and inconsistent caching across hooks.
+- **Fix summary**
+  - Presence entries now store `displayName` and `arenaId`, and the client resolves and primes cached friendly names from the authenticated profile or the `players/{playerId}` document before joining.
+  - UI chips consume the resolved `displayName` (or codename) only, ensuring presence renders readable names without UID fallbacks.
+
 ---
 
 This gap analysis should be revisited after each milestone PR lands so the shared checklist stays accurate.
