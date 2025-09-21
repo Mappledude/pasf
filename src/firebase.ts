@@ -131,7 +131,6 @@ export interface BossProfile {
 export interface PlayerProfile {
   id: string;
   codename: string;
-  passcode?: string;
   createdAt: ISODate;
   lastActiveAt?: ISODate;
 }
@@ -198,19 +197,43 @@ export const normalizePasscode = (passcode: string) => passcode.trim().toLowerCa
 
 export const createPlayer = async (input: CreatePlayerInput) => {
   await ensureAnonAuth();
-  const playersRef = collection(db, "players");
   const now = serverTimestamp();
   const normalizedPasscode = normalizePasscode(input.passcode);
-  const pRef = await addDoc(playersRef, {
+  const playersRef = collection(db, "players");
+  const playerRef = doc(playersRef);
+  await setDoc(playerRef, {
     codename: input.codename,
-    passcode: normalizedPasscode,
     createdAt: now,
+    lastActiveAt: now,
   });
   await setDoc(doc(db, "passcodes", normalizedPasscode), {
-    playerId: pRef.id,
+    playerId: playerRef.id,
     createdAt: now,
   });
-  return pRef.id;
+  return playerRef.id;
+};
+
+export const findPlayerByPasscode = async (
+  raw: string
+): Promise<PlayerProfile | undefined> => {
+  await ensureAnonAuth();
+  const code = normalizePasscode(raw);
+
+  // Look up passcodes/{code} -> { playerId }
+  const passSnap = await getDoc(doc(db, "passcodes", code));
+  if (!passSnap.exists()) return undefined;
+
+  const { playerId } = passSnap.data() as { playerId: string };
+  const pSnap = await getDoc(doc(db, "players", playerId));
+  if (!pSnap.exists()) return undefined;
+
+  const d = pSnap.data() as any;
+  return {
+    id: pSnap.id,
+    codename: d.codename,
+    createdAt: d.createdAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
+    lastActiveAt: d.lastActiveAt?.toDate?.()?.toISOString?.(),
+  } as PlayerProfile;
 };
 
 export const loginWithPasscode = async (passcode: string): Promise<PlayerProfile> => {
@@ -237,20 +260,20 @@ export const loginWithPasscode = async (passcode: string): Promise<PlayerProfile
   console.info(`[AUTH] loginWithPasscode ok ${profile.id}`);
   return profile;
 };
-
 export const listPlayers = async (): Promise<PlayerProfile[]> => {
+  await ensureAnonAuth();
   const snapshot = await getDocs(collection(db, "players"));
-  return snapshot.docs.map((s) => {
-    const d = s.data() as any;
+  return snapshot.docs.map((docSnap) => {
+    const d = docSnap.data() as any;
     return {
-      id: s.id,
+      id: docSnap.id,
       codename: d.codename,
-      passcode: d.passcode,
-      createdAt: d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString(),
-      lastActiveAt: d.lastActiveAt?.toDate?.().toISOString?.(),
+      createdAt: d.createdAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
+      lastActiveAt: d.lastActiveAt?.toDate?.()?.toISOString?.(),
     } as PlayerProfile;
   });
 };
+
 
 export const updatePlayerActivity = async (playerId: string) => {
   await updateDoc(doc(db, "players", playerId), { lastActiveAt: serverTimestamp() });

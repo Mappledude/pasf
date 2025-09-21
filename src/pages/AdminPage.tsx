@@ -267,9 +267,6 @@ const AdminPage = () => {
                         <span className="muted">Created {new Date(p.createdAt).toLocaleString()}</span>
                       )}
                     </div>
-                    <div className="meta">
-                      {p.passcode ? <span className="muted">{p.passcode}</span> : <span className="muted">—</span>}
-                    </div>
                   </li>
                 ))}
               </ul>
