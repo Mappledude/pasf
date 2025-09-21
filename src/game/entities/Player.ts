@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { createFighterRig, type FighterPose } from "../arena/fighterRig";
 import { bindTrainingControls, TrainingControls, unbindTrainingControls } from "../input/keys";
 
 const PLAYER_WIDTH = 28;
@@ -24,15 +25,21 @@ export class Player extends Phaser.Events.EventEmitter {
   readonly body: Phaser.Physics.Arcade.Body;
   readonly attackHitbox: Phaser.GameObjects.Rectangle;
 
+  private readonly scene: Phaser.Scene;
   private readonly controls: TrainingControls;
   private attackTimer = 0;
   private attackCooldown = 0;
   private attackConsumed = false;
   private coyoteTimer = 0;
   private controlsEnabled = true;
+  private rigPose: FighterPose = "idle";
+  private rigState = { onGround: true, velocityX: 0, isAttacking: false };
+  private rig: ReturnType<typeof createFighterRig> | null = null;
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     super();
+
+    this.scene = scene;
 
     this.sprite = scene.add.rectangle(x, y, PLAYER_WIDTH, PLAYER_HEIGHT, PLAYER_COLOR);
     scene.physics.add.existing(this.sprite);
@@ -51,10 +58,13 @@ export class Player extends Phaser.Events.EventEmitter {
     attackBody.enable = false;
 
     this.controls = bindTrainingControls(scene.input.keyboard!);
+
+    this.refreshRig();
   }
 
   update(dt: number) {
     const attackBody = this.attackHitbox.body as Phaser.Physics.Arcade.Body;
+    let onGround = this.body.blocked.down;
 
     if (!this.controlsEnabled) {
       this.body.setAccelerationX(0);
@@ -70,6 +80,7 @@ export class Player extends Phaser.Events.EventEmitter {
       const hitboxX = this.sprite.x + this.facing * ATTACK_OFFSET;
       attackBody.reset(hitboxX, this.sprite.y);
       this.attackHitbox.setPosition(hitboxX, this.sprite.y);
+      this.updateRigVisual({ onGround, velocityX: 0, isAttacking: false });
       return;
     }
 
@@ -82,7 +93,7 @@ export class Player extends Phaser.Events.EventEmitter {
       this.facing = 1;
     }
 
-    const onGround = this.body.blocked.down;
+    onGround = this.body.blocked.down;
     if (onGround) {
       this.coyoteTimer = COYOTE_TIME;
       this.body.setDrag(GROUND_DRAG, 0);
@@ -125,6 +136,12 @@ export class Player extends Phaser.Events.EventEmitter {
     if (!active) {
       this.attackConsumed = false;
     }
+
+    this.updateRigVisual({
+      onGround,
+      velocityX: this.body.velocity.x,
+      isAttacking: active,
+    });
   }
 
   getInputFlags() {
@@ -160,6 +177,7 @@ export class Player extends Phaser.Events.EventEmitter {
     unbindTrainingControls(this.controls);
     this.attackHitbox.destroy();
     this.sprite.destroy();
+    this.rig?.destroy();
     this.removeAllListeners();
   }
 
@@ -177,10 +195,16 @@ export class Player extends Phaser.Events.EventEmitter {
       attackBody.enable = false;
       this.attackHitbox.setVisible(false);
     }
+    this.updateRigVisual({
+      onGround: this.body.blocked.down,
+      velocityX: this.body.velocity.x,
+      isAttacking: false,
+    });
   }
 
   setHp(hp: number) {
     this.hp = Phaser.Math.Clamp(hp, 0, this.maxHp);
+    this.updateRigVisual();
   }
 
   setPosition(x: number, y: number) {
@@ -190,11 +214,78 @@ export class Player extends Phaser.Events.EventEmitter {
     const hitboxX = x + this.facing * ATTACK_OFFSET;
     attackBody.reset(hitboxX, y);
     this.attackHitbox.setPosition(hitboxX, y);
+    this.updateRigVisual();
   }
 
   private startAttack() {
     this.attackTimer = ATTACK_DURATION;
     this.attackCooldown = ATTACK_COOLDOWN;
     this.attackConsumed = false;
+  }
+
+  refreshRig() {
+    if (this.rig) {
+      this.updateRigVisual({
+        onGround: this.body.blocked.down,
+        velocityX: this.body.velocity.x,
+        isAttacking: this.isAttackActive(),
+      });
+      return true;
+    }
+    const rig = createFighterRig(this.scene, { tint: PLAYER_COLOR, depth: this.sprite.depth + 1 });
+    if (!rig) {
+      return false;
+    }
+    this.rig = rig;
+    this.sprite.setVisible(false);
+    this.updateRigVisual({
+      onGround: this.body.blocked.down,
+      velocityX: this.body.velocity.x,
+      isAttacking: this.isAttackActive(),
+    });
+    return true;
+  }
+
+  hasRig() {
+    return !!this.rig;
+  }
+
+  handleTextureUpdate() {
+    this.refreshRig();
+  }
+
+  private updateRigVisual(
+    overrides?: Partial<typeof this.rigState>,
+  ) {
+    if (!this.rig) {
+      return;
+    }
+    if (overrides) {
+      this.rigState = { ...this.rigState, ...overrides };
+    }
+    this.rig.setPosition(this.sprite.x, this.sprite.y);
+    this.rig.setFacing(this.facing);
+    const pose = this.resolveRigPose();
+    if (pose !== this.rigPose) {
+      this.rigPose = pose;
+    }
+    this.rig.setPose(this.rigPose);
+    this.rig.setVisible(true);
+  }
+
+  private resolveRigPose(): FighterPose {
+    if (this.hp <= 0) {
+      return "ko";
+    }
+    if (this.rigState.isAttacking) {
+      return "punch";
+    }
+    if (!this.rigState.onGround) {
+      return "jump";
+    }
+    if (Math.abs(this.rigState.velocityX) > 40) {
+      return "run";
+    }
+    return "idle";
   }
 }
