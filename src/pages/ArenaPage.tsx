@@ -7,13 +7,12 @@ import {
   leaveArena,
   claimArenaSeat,
   releaseArenaSeat,
+import {
+  initArenaPlayerState,
   watchLeaderboard,
   type LeaderboardEntry,
 } from "../firebase";
-// keep your existing firebase import (whatever identifiers you use)
-import { /* db, ensureAnonAuth, ... */ } from "../firebase";
 
-// also keep the debug helpers from main
 import { debugLog, debugWarn } from "../net/debug";
 
 import {
@@ -244,7 +243,18 @@ export default function ArenaPage() {
 
   const chipNames = useMemo(() => {
     if (presence.length) {
-      return presence.map((entry) => entry.codename || entry.playerId.slice(0, 6));
+      return presence.map((entry) => {
+        if (entry.codename && entry.codename.trim().length > 0) {
+          return entry.codename;
+        }
+        if (entry.profileId && entry.profileId.trim().length > 0) {
+          return entry.profileId;
+        }
+        if (entry.authUid && entry.authUid.trim().length > 0) {
+          return entry.authUid.slice(0, 6);
+        }
+        return entry.playerId.slice(0, 6);
+      });
     }
     return agents;
   }, [agents, presence]);
@@ -263,7 +273,8 @@ export default function ArenaPage() {
   const isSeatMine = (seat?: SeatEntry) => {
     if (!seat || !meUid) return false;
     if (seat.uid === meUid) return true;
-    if (meProfileId && seat.playerId === meProfileId) return true;
+    if (meProfileId && (seat.profileId === meProfileId || seat.playerId === meProfileId))
+      return true;
     if (!seat.playerId && seat.uid === meUid) return true;
     return false;
   };
@@ -271,12 +282,24 @@ export default function ArenaPage() {
   const resolveSeatName = (seat?: SeatEntry) => {
     if (!seat) return "Empty";
     const match = presence.find((entry) => {
+      if (seat.profileId && entry.profileId && entry.profileId === seat.profileId) {
+        return true;
+      }
       if (seat.playerId && entry.profileId && entry.profileId === seat.playerId) {
+        return true;
+      }
+      if (seat.profileId && entry.playerId === seat.profileId) {
         return true;
       }
       return entry.playerId === seat.uid || entry.authUid === seat.uid;
     });
-    const base = match?.codename ?? seat.playerId ?? seat.uid;
+    const base =
+      match?.codename ??
+      seat.codename ??
+      seat.displayName ??
+      seat.profileId ??
+      seat.playerId ??
+      seat.uid;
     return base || "Agent";
   };
 
@@ -311,7 +334,12 @@ export default function ArenaPage() {
     setSeatBusy(seatNo);
     setSeatMessage(null);
     try {
-      await claimArenaSeat(arenaId, seatNo, { uid: meUid, playerId: meProfileId });
+      await claimArenaSeat(arenaId, seatNo, {
+        uid: meUid,
+        playerId: meProfileId,
+        profileId: meProfileId,
+        codename: player?.codename ?? meUid.slice(0, 6),
+      });
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to join seat.";
       setSeatMessage(message);
@@ -325,7 +353,11 @@ export default function ArenaPage() {
     setSeatBusy(seatNo);
     setSeatMessage(null);
     try {
-      await releaseArenaSeat(arenaId, seatNo, { uid: meUid, playerId: meProfileId });
+      await releaseArenaSeat(arenaId, seatNo, {
+        uid: meUid,
+        playerId: meProfileId,
+        profileId: meProfileId,
+      });
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to leave seat.";
       setSeatMessage(message);
