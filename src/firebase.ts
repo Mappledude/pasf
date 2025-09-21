@@ -143,6 +143,7 @@ export interface CreatePlayerInput {
 }
 
 export const createPlayer = async (input: CreatePlayerInput) => {
+  await ensureAnonAuth();
   const playersRef = collection(db, "players");
   const now = serverTimestamp();
   const pRef = await addDoc(playersRef, {
@@ -215,6 +216,7 @@ export interface CreateArenaInput {
 }
 
 export const createArena = async (input: CreateArenaInput) => {
+  await ensureAnonAuth();
   const arenasRef = collection(db, "arenas");
   const now = serverTimestamp();
   const aRef = await addDoc(arenasRef, {
