@@ -16,15 +16,15 @@ export const isPresenceEntryActive = (
   entry: ArenaPresenceEntry,
   now: number = Date.now(),
 ): boolean => {
-  const expireAtMs = parseIsoDate(entry.expireAt ?? null);
-  if (Number.isFinite(expireAtMs) && now <= expireAtMs + PRESENCE_GRACE_BUFFER_MS) {
-    return true;
-  }
-
   const lastSeenMs = parseIsoDate(entry.lastSeen ?? null);
   if (Number.isFinite(lastSeenMs)) {
-    return now - lastSeenMs <= HEARTBEAT_ACTIVE_WINDOW_MS + PRESENCE_GRACE_BUFFER_MS;
+    return now - lastSeenMs <= HEARTBEAT_ACTIVE_WINDOW_MS;
   }
 
-  return true;
+  const expireAtMs = parseIsoDate(entry.expireAt ?? null);
+  if (Number.isFinite(expireAtMs)) {
+    return now <= expireAtMs;
+  }
+
+  return false;
 };

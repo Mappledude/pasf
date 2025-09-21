@@ -139,6 +139,23 @@ export function useArenaPresence(arenaId?: string): UseArenaPresenceResult {
     let cancelled = false;
     let generation = 0;
     let latestEntries: ArenaPresenceEntry[] = [];
+    let debounceTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const flushEntries = () => {
+      if (cancelled) return;
+      setPlayers(applyCachedDisplayNames(latestEntries));
+      setLoading(false);
+    };
+
+    const scheduleFlush = () => {
+      if (debounceTimeout) {
+        clearTimeout(debounceTimeout);
+      }
+      debounceTimeout = setTimeout(() => {
+        debounceTimeout = null;
+        flushEntries();
+      }, 2_000);
+    };
 
     (async () => {
       try {
@@ -150,8 +167,7 @@ export function useArenaPresence(arenaId?: string): UseArenaPresenceResult {
           if (cancelled) return;
           const currentGen = ++generation;
           latestEntries = filterActiveEntries(entries);
-          setPlayers(applyCachedDisplayNames(latestEntries));
-          setLoading(false);
+          scheduleFlush();
           const missingIds = collectMissingPlayerIds(latestEntries);
           if (!missingIds.length) {
             return;
@@ -167,7 +183,7 @@ export function useArenaPresence(arenaId?: string): UseArenaPresenceResult {
             .then(() => {
               if (cancelled) return;
               if (currentGen !== generation) return;
-              setPlayers(applyCachedDisplayNames(latestEntries));
+              scheduleFlush();
             })
             .catch((err) => {
               if (cancelled) return;
@@ -184,6 +200,9 @@ export function useArenaPresence(arenaId?: string): UseArenaPresenceResult {
     return () => {
       cancelled = true;
       unsub?.();
+      if (debounceTimeout) {
+        clearTimeout(debounceTimeout);
+      }
     };
   }, [arenaId, resolveDisplayName]);
 
