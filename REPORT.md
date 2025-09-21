@@ -42,6 +42,8 @@ This report enumerates the gaps between the current lobby scaffold and the "From
   4. Add a Cloud Function (or local emulator script) that watches finished matches and cleans up `/arenas/*` subcollections.
 
 ## E. Networking Skeleton and Authoritative Transport
+- **Updates**
+  - Locked down Firestore arena input and seat documents so only authenticated owners can write, covering the brief's security gap for seat-bound input publishing.
 - **Missing components / files**
   - `src/net/ActionBus.ts` exists but is not wired into the arena scene or battle reducer; there is no reconciliation layer between Firestore actions and the simulation history in `src/sim`.
   - No deterministic snapshot/rollback service; `src/sim/reducer.ts` runs locally only.
