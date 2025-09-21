@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { createArenaSync, type ArenaStateSnapshot, type ArenaSync } from "../net/arenaSync";
+import { createSnapshotBuffer } from "../net/interpolate";
 import { Player } from "../entities/Player";
 import { RemoteOpponent } from "../entities/RemoteOpponent";
 
@@ -14,6 +15,11 @@ export interface ArenaSceneConfig {
   arenaId: string;
   me: { id: string; codename: string };
   spawn: { x: number; y: number };
+  /**
+   * When true, the local client is driving the authoritative simulation and should
+   * not interpolate its own avatar.
+   */
+  isHostClient?: boolean;
 }
 
 export default class ArenaScene extends Phaser.Scene {
@@ -36,6 +42,9 @@ export default class ArenaScene extends Phaser.Scene {
   private lastHitAt = 0;
   private controlsLocked = false;
   private latestOpponentName = "";
+  private isHostClient = false;
+  private needsHudUpdate = false;
+  private readonly snapshotBuffer = createSnapshotBuffer({ interpolationDelayMs: 120 });
 
   constructor() {
     super("Arena");
@@ -45,6 +54,12 @@ export default class ArenaScene extends Phaser.Scene {
     this.arenaId = data.arenaId;
     this.me = data.me;
     this.spawn = data.spawn;
+    this.isHostClient = data.isHostClient ?? false;
+    this.snapshotBuffer.clear();
+    this.snapshotBuffer.setBypass(this.me.id, this.isHostClient);
+    this.opponentId = undefined;
+    this.latestOpponentName = "";
+    this.needsHudUpdate = false;
   }
 
   create() {
@@ -87,6 +102,8 @@ export default class ArenaScene extends Phaser.Scene {
     if (!this.player) return;
 
     this.player.update(dt);
+
+    this.applyOpponentInterpolation();
 
     const body = this.player.body;
     const facing = this.player.facing === 1 ? "R" : "L";
@@ -137,9 +154,13 @@ export default class ArenaScene extends Phaser.Scene {
     const targetOpponentId = otherIds[0];
 
     if (!targetOpponentId) {
+      if (this.opponentId) {
+        this.snapshotBuffer.clear(this.opponentId);
+      }
       this.opponentId = undefined;
       this.opponent?.setActive(false);
       this.latestOpponentName = "";
+      this.needsHudUpdate = false;
       this.updateHud();
       return;
     }
@@ -148,26 +169,22 @@ export default class ArenaScene extends Phaser.Scene {
     if (!opponentState) return;
 
     if (this.opponentId !== targetOpponentId) {
+      if (this.opponentId) {
+        this.snapshotBuffer.clear(this.opponentId);
+      }
       this.opponentId = targetOpponentId;
       this.opponent?.setCodename(opponentState.codename ?? "Agent");
       this.lastHitAt = 0;
     }
 
-    const oppHp = typeof opponentState.hp === "number" ? opponentState.hp : this.opponent?.hp ?? 100;
-    const prevOppHp = this.opponent?.hp ?? oppHp;
-    this.opponent?.setState({
-      x: opponentState.x ?? this.spawn.x,
-      y: opponentState.y ?? this.spawn.y,
-      facing: opponentState.facing === "L" ? "L" : "R",
-      hp: oppHp,
+    this.snapshotBuffer.ingest(targetOpponentId, {
+      ...opponentState,
+      x: typeof opponentState.x === "number" ? opponentState.x : this.spawn.x,
+      y: typeof opponentState.y === "number" ? opponentState.y : this.spawn.y,
     });
 
-    if (prevOppHp > 0 && oppHp <= 0) {
-      this.flashKo();
-    }
-
     this.latestOpponentName = opponentState.codename ?? "Agent";
-    this.updateHud();
+    this.needsHudUpdate = true;
   };
 
   private onLocalKo() {
@@ -279,5 +296,40 @@ export default class ArenaScene extends Phaser.Scene {
     this.sync = undefined;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    this.snapshotBuffer.clear();
+  }
+
+  private applyOpponentInterpolation() {
+    if (!this.opponent || !this.opponentId) return;
+    const transform = this.snapshotBuffer.interpolate(this.opponentId, this.time.now);
+    if (!transform) return;
+
+    const prevHp = this.opponent.hp;
+    const hp = typeof transform.hp === "number" ? transform.hp : this.opponent.hp;
+
+    this.opponent.setState({
+      x: transform.x,
+      y: transform.y,
+      facing: transform.facing,
+      hp,
+    });
+
+    if (prevHp > 0 && typeof hp === "number" && hp <= 0) {
+      this.flashKo();
+    }
+
+    if (transform.didLerp) {
+      const lerpValue = Number.isFinite(transform.lerpFactor)
+        ? transform.lerpFactor.toFixed(2)
+        : "n/a";
+      console.log(
+        `[SNAP] ${this.opponentId} lerp=${lerpValue} target=${Math.round(transform.targetTime)} from=${Math.round(transform.from.ts)} to=${Math.round(transform.to.ts)}`,
+      );
+    }
+
+    if (this.needsHudUpdate) {
+      this.needsHudUpdate = false;
+      this.updateHud();
+    }
   }
 }
