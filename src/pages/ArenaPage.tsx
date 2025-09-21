@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import Phaser from "phaser";
 import { useParams, useNavigate } from "react-router-dom";
 import Phaser from "phaser";
 import {
@@ -20,7 +21,8 @@ import { useArenaPresence } from "../utils/useArenaPresence";
 import { useArenaSeats } from "../utils/useArenaSeats";
 import { useAuth } from "../context/AuthContext";
 import { makeGame } from "../game/phaserGame";
-import ArenaScene from "../game/arena/ArenaScene";
+import ArenaScene, { type ArenaSceneConfig } from "../game/arena/ArenaScene";
+
 
 export default function ArenaPage() {
   const { arenaId = "" } = useParams();
@@ -30,6 +32,8 @@ export default function ArenaPage() {
   const [state, setState] = useState<ArenaState | undefined>(undefined);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
+const [gameBooted, setGameBooted] = useState(false);
+
   const { players: presence, loading: presenceLoading, error: presenceError } = useArenaPresence(arenaId);
   const { seats, loading: seatsLoading, error: seatsError } = useArenaSeats(arenaId);
   const { user, player, authReady } = useAuth();
@@ -313,6 +317,55 @@ export default function ArenaPage() {
     };
   }, [arenaId, meProfileId, meUid]);
 
+  useEffect(() => {
+    if (!arenaId) return;
+    if (!authReady || !stateReady) return;
+    if (!canvasRef.current) return;
+    if (!user?.uid) return;
+    if (gameRef.current) return;
+
+    const codename = player?.codename ?? user.uid.slice(0, 6);
+    const sceneConfig: ArenaSceneConfig = {
+      arenaId,
+      me: { id: user.uid, codename },
+      spawn: { x: 240, y: 540 - 40 - 60 },
+    };
+
+    const config: Phaser.Types.Core.GameConfig = {
+      type: Phaser.AUTO,
+      width: 960,
+      height: 540,
+      parent: canvasRef.current,
+      backgroundColor: "#0f1115",
+      physics: {
+        default: "arcade",
+        arcade: {
+          gravity: { x: 0, y: 900 },
+          debug: false,
+        },
+      },
+      scene: [],
+    };
+
+    console.info("[ARENA] booting Phaser ArenaScene", {
+      arenaId,
+      uid: user.uid,
+      codename,
+    });
+
+    const game = makeGame(config);
+    gameRef.current = game;
+    game.scene.add("Arena", ArenaScene, true, sceneConfig);
+    setGameBooted(true);
+
+    return () => {
+      console.info("[ARENA] tearing down Phaser ArenaScene", { arenaId });
+      setGameBooted(false);
+      gameRef.current?.destroy(true);
+      gameRef.current = null;
+    };
+  }, [arenaId, authReady, stateReady, user?.uid, player?.codename]);
+
   return (
     <div className="grid" style={{ gap: 24 }}>
       <section className="card">
@@ -435,13 +488,15 @@ export default function ArenaPage() {
             placeItems: "center",
           }}
         >
-          {!isHost ? (
-            <div className="muted" style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)", textAlign: "center" }}>
-              {hostSeat
-                ? `Host: ${resolveSeatName(hostSeat)} · Claim Player 1 to take control.`
-                : "Claim Player 1 to launch the local host."}
-            </div>
-          ) : null}
+{!gameBooted && (
+  <div
+    className="muted"
+    style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)", textAlign: "center" }}
+  >
+    Arena scene boots once auth and /state/current are ready.
+  </div>
+)}
+
         </div>
         <div className="card-footer">[NET] {debugFooter}</div>
       </section>
