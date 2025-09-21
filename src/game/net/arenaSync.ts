@@ -7,10 +7,29 @@ import {
 } from "../../firebase";
 import { debugLog } from "../../net/debug";
 
+export type ArenaPhase = "lobby" | "play" | "ko" | "reset";
+
+export type ArenaLastEvent =
+  | { type: "phase"; phase: ArenaPhase; tick: number }
+  | { type: "ko"; tick: number; loserId: string; winnerId?: string; stocks: Record<string, number> };
+
+export type ArenaPlayerFrame = {
+  codename?: string;
+  pos?: { x: number; y: number };
+  vel?: { x: number; y: number };
+  dir?: -1 | 1;
+  hp?: number;
+  stocks?: number;
+  attackActiveUntil?: number;
+  canAttackAt?: number;
+  grounded?: boolean;
+};
+
 export type ArenaStateSnapshot = {
   tick?: number;
-  lastUpdate?: unknown;
-  players?: Record<string, (ArenaPlayerState & { updatedAt?: unknown }) | undefined>;
+  phase?: ArenaPhase;
+  players?: Record<string, ArenaPlayerFrame | undefined>;
+  lastEvent?: ArenaLastEvent;
 };
 
 export interface ArenaHostOptions {
