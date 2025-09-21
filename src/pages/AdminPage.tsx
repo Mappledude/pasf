@@ -7,8 +7,16 @@ import {
   listPlayers,
 } from "../firebase";
 import type { Arena, PlayerProfile } from "../types/models";
+import { useAuth } from "../context/AuthContext";
+
+const extractErrorMessage = (error: unknown) => {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error) return error;
+  return "Unknown error";
+};
 
 const AdminPage = () => {
+  const { loading } = useAuth();
   const [bossName, setBossName] = useState("Boss");
   const [playerCodename, setPlayerCodename] = useState("");
   const [playerPasscode, setPlayerPasscode] = useState("");
@@ -26,7 +34,7 @@ const AdminPage = () => {
     };
     bootstrap().catch((err) => {
       console.error(err);
-      setStatus("Failed to load admin data");
+      setStatus(`Failed to load admin data: ${extractErrorMessage(err)}`);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -45,7 +53,7 @@ const AdminPage = () => {
       setStatus("Boss profile updated.");
     } catch (err) {
       console.error(err);
-      setStatus("Failed to update boss profile");
+      setStatus(`Failed to update boss profile: ${extractErrorMessage(err)}`);
     }
   };
 
@@ -63,7 +71,7 @@ const AdminPage = () => {
       await refreshData();
     } catch (err) {
       console.error(err);
-      setStatus("Failed to create player");
+      setStatus(`Failed to create player: ${extractErrorMessage(err)}`);
     }
   };
 
@@ -83,9 +91,11 @@ const AdminPage = () => {
       await refreshData();
     } catch (err) {
       console.error(err);
-      setStatus("Failed to create arena");
+      setStatus(`Failed to create arena: ${extractErrorMessage(err)}`);
     }
   };
+
+  const formsDisabled = loading;
 
   return (
     <main>
@@ -103,68 +113,74 @@ const AdminPage = () => {
       <section className="card">
         <h2>Boss Profile</h2>
         <form onSubmit={handleEnsureBossProfile}>
-          <label htmlFor="boss-name">Display name</label>
-          <input
-            id="boss-name"
-            value={bossName}
-            onChange={(event) => setBossName(event.target.value)}
-            required
-          />
-          <button type="submit">Save Boss profile</button>
+          <fieldset disabled={formsDisabled}>
+            <label htmlFor="boss-name">Display name</label>
+            <input
+              id="boss-name"
+              value={bossName}
+              onChange={(event) => setBossName(event.target.value)}
+              required
+            />
+            <button type="submit">Save Boss profile</button>
+          </fieldset>
         </form>
       </section>
 
       <section className="card">
         <h2>Add Player</h2>
         <form onSubmit={handleCreatePlayer}>
-          <label htmlFor="player-codename">Codename</label>
-          <input
-            id="player-codename"
-            value={playerCodename}
-            onChange={(event) => setPlayerCodename(event.target.value)}
-            required
-          />
+          <fieldset disabled={formsDisabled}>
+            <label htmlFor="player-codename">Codename</label>
+            <input
+              id="player-codename"
+              value={playerCodename}
+              onChange={(event) => setPlayerCodename(event.target.value)}
+              required
+            />
 
-          <label htmlFor="player-passcode">Passcode (share privately!)</label>
-          <input
-            id="player-passcode"
-            value={playerPasscode}
-            onChange={(event) => setPlayerPasscode(event.target.value)}
-            required
-          />
+            <label htmlFor="player-passcode">Passcode (share privately!)</label>
+            <input
+              id="player-passcode"
+              value={playerPasscode}
+              onChange={(event) => setPlayerPasscode(event.target.value)}
+              required
+            />
 
-          <button type="submit">Create Player</button>
+            <button type="submit">Create Player</button>
+          </fieldset>
         </form>
       </section>
 
       <section className="card">
         <h2>Add Arena</h2>
         <form onSubmit={handleCreateArena}>
-          <label htmlFor="arena-name">Name</label>
-          <input
-            id="arena-name"
-            value={arenaName}
-            onChange={(event) => setArenaName(event.target.value)}
-            required
-          />
+          <fieldset disabled={formsDisabled}>
+            <label htmlFor="arena-name">Name</label>
+            <input
+              id="arena-name"
+              value={arenaName}
+              onChange={(event) => setArenaName(event.target.value)}
+              required
+            />
 
-          <label htmlFor="arena-description">Description</label>
-          <input
-            id="arena-description"
-            value={arenaDescription}
-            onChange={(event) => setArenaDescription(event.target.value)}
-          />
+            <label htmlFor="arena-description">Description</label>
+            <input
+              id="arena-description"
+              value={arenaDescription}
+              onChange={(event) => setArenaDescription(event.target.value)}
+            />
 
-          <label htmlFor="arena-capacity">Capacity (optional)</label>
-          <input
-            id="arena-capacity"
-            type="number"
-            value={arenaCapacity}
-            onChange={(event) => setArenaCapacity(event.target.value)}
-            min="0"
-          />
+            <label htmlFor="arena-capacity">Capacity (optional)</label>
+            <input
+              id="arena-capacity"
+              type="number"
+              value={arenaCapacity}
+              onChange={(event) => setArenaCapacity(event.target.value)}
+              min="0"
+            />
 
-          <button type="submit">Create Arena</button>
+            <button type="submit">Create Arena</button>
+          </fieldset>
         </form>
       </section>
 
