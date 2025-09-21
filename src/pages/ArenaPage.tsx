@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { auth, db } from "../firebase";
-import { onAuthStateChanged } from "firebase/auth";
+import { db } from "../firebase";
 import {
   ensureArenaState,
   watchArenaState,
@@ -9,31 +8,35 @@ import {
   type ArenaState,
 } from "../lib/arenaState";
 import { useArenaPresence } from "../utils/useArenaPresence";
+import { useAuth } from "../context/AuthContext";
 
 export default function ArenaPage() {
   const { arenaId = "" } = useParams();
   const nav = useNavigate();
-  const [uid, setUid] = useState<string | null>(auth.currentUser?.uid ?? null);
   const [stateReady, setStateReady] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [state, setState] = useState<ArenaState | undefined>(undefined);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const { players: presence, loading: presenceLoading, error: presenceError } = useArenaPresence(arenaId);
-
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => setUid(u?.uid ?? null));
-    return unsub;
-  }, []);
+  const { user, loading: authLoading } = useAuth();
+  const authReady = !!user && !authLoading;
 
   // Auto-init + subscribe
   useEffect(() => {
     if (!arenaId) return;
+    if (!authReady) {
+      console.info("[ARENA] arena state init skipped: auth not ready", { arenaId });
+      return;
+    }
     let unsub: (() => void) | undefined;
+    let cancelled = false;
 
     (async () => {
       try {
-        await ensureArenaState(db, arenaId);     // Create doc if missing
-        unsub = watchArenaState(
+        console.info("[ARENA] arena state init starting", { arenaId });
+        await ensureArenaState(db, arenaId); // Create doc if missing
+        if (cancelled) return;
+        unsub = await watchArenaState(
           db,
           arenaId,
           (s) => {
@@ -41,26 +44,51 @@ export default function ArenaPage() {
             setStateReady(!!s);
           },
           (e) => {
-            console.error("[arena watch] error", e);
+            console.error("[ARENA] arena watch error", e);
             setErr("Live state failed to load.");
           }
         );
+        console.info("[ARENA] arena state subscription active", { arenaId });
       } catch (e) {
-        console.error("[arena init] error", e);
+        if (cancelled) return;
+        console.error("[ARENA] arena init error", e);
         setErr("Failed to initialize arena state.");
       }
     })();
 
-    return () => unsub?.();
-  }, [arenaId]);
+    return () => {
+      cancelled = true;
+      setStateReady(false);
+      if (unsub) {
+        unsub();
+      }
+    };
+  }, [arenaId, authReady]);
 
   // Touch player presence in state (hp + updatedAt)
   useEffect(() => {
-    if (!arenaId || !uid) return;
-    touchPlayer(db, arenaId, { uid } as any).catch((e) =>
-      console.warn("[touchPlayer] failed", e)
-    );
-  }, [arenaId, uid]);
+    if (!arenaId) return;
+    if (!authReady) {
+      console.info("[ARENA] touchPlayer skipped: auth not ready", { arenaId });
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        console.info("[ARENA] touchPlayer start", { arenaId, uid: user?.uid });
+        await touchPlayer(db, arenaId);
+        if (!cancelled) {
+          console.info("[ARENA] touchPlayer complete", { arenaId, uid: user?.uid });
+        }
+      } catch (e) {
+        if (cancelled) return;
+        console.warn("[ARENA] touchPlayer failed", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [arenaId, authReady, user?.uid]);
 
   const agents = useMemo(() => Object.keys(state?.players ?? {}), [state]);
 
