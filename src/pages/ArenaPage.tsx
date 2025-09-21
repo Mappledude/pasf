@@ -10,6 +10,12 @@ import {
   watchLeaderboard,
   type LeaderboardEntry,
 } from "../firebase";
+// keep your existing firebase import (whatever identifiers you use)
+import { /* db, ensureAnonAuth, ... */ } from "../firebase";
+
+// also keep the debug helpers from main
+import { debugLog, debugWarn } from "../net/debug";
+
 import {
   ensureArenaState,
   watchArenaState,
