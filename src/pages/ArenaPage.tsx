@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+
 import {
   db,
   ensureAnonAuth,
@@ -7,31 +8,29 @@ import {
   leaveArena,
   claimArenaSeat,
   releaseArenaSeat,
-import {
   initArenaPlayerState,
   watchLeaderboard,
-  type LeaderboardEntry,
 } from "../firebase";
+import type { LeaderboardEntry } from "../firebase";
 
-import { debugLog, debugWarn } from "../net/debug";
+import { ARENA_NET_DEBUG, debugLog } from "../net/debug";
 
 import {
   ensureArenaState,
   watchArenaState,
   touchPlayer,
-  type ArenaState,
 } from "../lib/arenaState";
+import type { ArenaState } from "../lib/arenaState";
+
 import { useArenaPresence } from "../utils/useArenaPresence";
 import { useArenaSeats } from "../utils/useArenaSeats";
 import { useAuth } from "../context/AuthContext";
 import TouchControls from "../game/input/TouchControls";
 import { useArenaRuntime } from "../utils/useArenaRuntime";
-import { ARENA_NET_DEBUG, debugLog } from "../net/debug";
 
+// Optional: keep a gated warn helper (don’t also import debugWarn)
 const debugWarn = (...args: unknown[]) => {
-  if (!ARENA_NET_DEBUG) {
-    return;
-  }
+  if (!ARENA_NET_DEBUG) return;
   console.warn(...args);
 };
 
