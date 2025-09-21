@@ -430,8 +430,32 @@ export async function updateArenaPlayerState(
 }
 
 export function watchArenaState(arenaId: string, cb: (state: any) => void) {
-  const ref = arenaStateDoc(arenaId);
-  return onSnapshot(ref, (snap) => cb(snap.exists() ? snap.data() : undefined));
+  let unsubscribe: Unsubscribe | null = null;
+  let cancelled = false;
+
+  ensureAnonAuth()
+    .then(() => {
+      if (cancelled) return;
+      const ref = arenaStateDoc(arenaId);
+      unsubscribe = onSnapshot(ref, (snap) =>
+        cb(snap.exists() ? snap.data() : undefined),
+      );
+      if (cancelled && unsubscribe) {
+        unsubscribe();
+        unsubscribe = null;
+      }
+    })
+    .catch((error) => {
+      console.error("[firebase] watchArenaState failed to auth", error);
+    });
+
+  return () => {
+    cancelled = true;
+    if (unsubscribe) {
+      unsubscribe();
+      unsubscribe = null;
+    }
+  };
 }
 
 export async function applyDamage(arenaId: string, targetPlayerId: string, amount: number) {
