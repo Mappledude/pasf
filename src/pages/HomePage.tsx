@@ -1,31 +1,18 @@
-import React, { FormEvent, useEffect, useState } from "react";
+import React, { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { listArenas } from "../firebase";
 import { useAuth } from "../context/AuthContext";
-import type { Arena } from "../types/models";
+import { useArenas } from "../utils/useArenas";
 
 const HomePage = () => {
-  const { login, player, loading } = useAuth();
+  const { login, player, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [passcode, setPasscode] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [arenas, setArenas] = useState<Arena[]>([]);
-  const [isLoadingArenas, setIsLoadingArenas] = useState(false);
-
-  useEffect(() => {
-    const fetchArenas = async () => {
-      setIsLoadingArenas(true);
-      try {
-        const arenaList = await listArenas();
-        setArenas(arenaList);
-      } catch (err) {
-        console.error("Failed to load arenas", err);
-      } finally {
-        setIsLoadingArenas(false);
-      }
-    };
-    fetchArenas().catch((err) => console.error(err));
-  }, []);
+  const {
+    arenas,
+    loading: arenasLoading,
+    error: arenasError,
+  } = useArenas();
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -52,8 +39,8 @@ const HomePage = () => {
           placeholder="e.g. thunder-fox"
           required
         />
-        <button type="submit" disabled={loading}>
-          {loading ? "Connecting..." : "Enter Lobby"}
+        <button type="submit" disabled={authLoading}>
+          {authLoading ? "Connecting..." : "Enter Lobby"}
         </button>
       </form>
       {error ? <p role="alert">{error}</p> : null}
@@ -63,7 +50,9 @@ const HomePage = () => {
   const renderArenaList = () => (
     <section className="card">
       <h2>Arenas</h2>
-      {isLoadingArenas ? (
+      {arenasError ? (
+        <p role="alert">Failed to load arenas.</p>
+      ) : arenasLoading ? (
         <p>Loading arenas…</p>
       ) : arenas.length === 0 ? (
         <p>No arenas created yet.</p>
@@ -87,9 +76,16 @@ const HomePage = () => {
 
   return (
     <main>
-      {!player ? renderPasscodePrompt() : null}
+      {authLoading ? (
+        <section className="card">
+          <h1>Preparing lobby…</h1>
+          <p>Securing your connection. Please wait.</p>
+        </section>
+      ) : !player ? (
+        renderPasscodePrompt()
+      ) : null}
 
-      {player ? (
+      {!authLoading && player ? (
         <section className="card">
           <h1>Lobby</h1>
           <p>Welcome, Agent {player.codename}. Choose an arena to jump into.</p>
@@ -107,7 +103,7 @@ const HomePage = () => {
         </a>
       </section>
 
-      {player ? renderArenaList() : null}
+      {!authLoading && player ? renderArenaList() : null}
     </main>
   );
 };

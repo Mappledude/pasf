@@ -4,7 +4,7 @@ import {
   createPlayer,
   ensureBossProfile,
   listPlayers,
-  ensureAnonAuth, // ✅ make sure we await auth before any Firestore calls
+  ensureAnonAuth,
   normalizePasscode,
 } from "../firebase";
 import type { PlayerProfile } from "../types/models";
@@ -18,14 +18,16 @@ const extractErrorMessage = (error: unknown) => {
 };
 
 const AdminPage = () => {
-  const { loading } = useAuth(); // loading === true until anon auth is ready
+  const { loading } = useAuth(); // true until anon auth ready
+
+  // Boss
   const [bossName, setBossName] = useState("Boss");
 
-  // Players form state
+  // Players form
   const [playerCodename, setPlayerCodename] = useState("");
   const [playerPasscode, setPlayerPasscode] = useState("");
 
-  // Arenas form state
+  // Arenas form
   const [arenaName, setArenaName] = useState("");
   const [arenaDescription, setArenaDescription] = useState("");
   const [arenaCapacity, setArenaCapacity] = useState<string>("");
@@ -40,8 +42,7 @@ const AdminPage = () => {
   useEffect(() => {
     const bootstrap = async () => {
       try {
-        // ✅ Ensure auth first (rules require request.auth != null)
-        await ensureAnonAuth();
+        await ensureAnonAuth();                // ✅ rules need auth
         await ensureBossProfile(bossName);
         await fetchPlayers();
       } catch (err) {
@@ -51,20 +52,19 @@ const AdminPage = () => {
     };
     void bootstrap();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once on mount
+  }, []);
 
   const fetchPlayers = async () => {
-    // ✅ guard reads with auth
-    await ensureAnonAuth();
+    await ensureAnonAuth();                   // ✅ guard reads too
     const playerList = await listPlayers();
     setPlayers(playerList);
   };
 
-  const handleEnsureBossProfile = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleEnsureBossProfile = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
     setStatus(null);
     try {
-      await ensureAnonAuth(); // ✅
+      await ensureAnonAuth();
       await ensureBossProfile(bossName);
       setStatus("Boss profile updated.");
     } catch (err) {
@@ -73,31 +73,30 @@ const AdminPage = () => {
     }
   };
 
-  const handleCreatePlayer = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleCreatePlayer = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
     setStatus(null);
     try {
-      await ensureAnonAuth(); // ✅
-      const normalizedPasscode = normalizePasscode(playerPasscode);
+      await ensureAnonAuth();
       await createPlayer({
         codename: playerCodename,
-        passcode: normalizedPasscode,
+        passcode: normalizePasscode(playerPasscode), // ✅ normalized
       });
       setPlayerCodename("");
       setPlayerPasscode("");
       setStatus("Player created.");
-      await fetchPlayers(); // refresh list after success
+      await fetchPlayers();
     } catch (err) {
       console.error(err);
       setStatus(`Failed to create player: ${extractErrorMessage(err)}`);
     }
   };
 
-  const handleCreateArena = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleCreateArena = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
     setStatus(null);
     try {
-      await ensureAnonAuth(); // ✅
+      await ensureAnonAuth();
       await createArena({
         name: arenaName,
         description: arenaDescription || undefined,
@@ -107,14 +106,14 @@ const AdminPage = () => {
       setArenaDescription("");
       setArenaCapacity("");
       setStatus("Arena created.");
-      // No manual refresh needed for arenas: useArenas() is real-time
+      // useArenas() will update list in real-time
     } catch (err) {
       console.error(err);
       setStatus(`Failed to create arena: ${extractErrorMessage(err)}`);
     }
   };
 
-  const formsDisabled = loading; // disable forms until auth is ready
+  const formsDisabled = loading;
 
   return (
     <main>
@@ -122,12 +121,7 @@ const AdminPage = () => {
         <h1>Admin Console</h1>
         <p>Use this console to manage players and arenas.</p>
         <p>
-          <a
-            className="button-link"
-            href="/training-standalone.html"
-            target="_blank"
-            rel="noreferrer"
-          >
+          <a className="button-link" href="/training-standalone.html" target="_blank" rel="noreferrer">
             Open Training (Standalone)
           </a>
         </p>
@@ -137,15 +131,15 @@ const AdminPage = () => {
       <section className="card">
         <h2>Boss Profile</h2>
         <form onSubmit={handleEnsureBossProfile}>
-          <fieldset disabled={formsDisabled}>
+          <fieldset disabled={formsDisabled} className="fieldset">
             <label htmlFor="boss-name">Display name</label>
             <input
               id="boss-name"
               value={bossName}
-              onChange={(event) => setBossName(event.target.value)}
+              onChange={(e) => setBossName(e.target.value)}
               required
             />
-            <button type="submit">Save Boss profile</button>
+            <button className="button" type="submit">Save Boss profile</button>
           </fieldset>
         </form>
       </section>
@@ -153,12 +147,12 @@ const AdminPage = () => {
       <section className="card">
         <h2>Add Player</h2>
         <form onSubmit={handleCreatePlayer}>
-          <fieldset disabled={formsDisabled}>
+          <fieldset disabled={formsDisabled} className="fieldset">
             <label htmlFor="player-codename">Codename</label>
             <input
               id="player-codename"
               value={playerCodename}
-              onChange={(event) => setPlayerCodename(event.target.value)}
+              onChange={(e) => setPlayerCodename(e.target.value)}
               required
             />
 
@@ -166,11 +160,11 @@ const AdminPage = () => {
             <input
               id="player-passcode"
               value={playerPasscode}
-              onChange={(event) => setPlayerPasscode(event.target.value)}
+              onChange={(e) => setPlayerPasscode(e.target.value)}
               required
             />
 
-            <button type="submit">Create Player</button>
+            <button className="button" type="submit">Create Player</button>
           </fieldset>
         </form>
       </section>
@@ -178,12 +172,12 @@ const AdminPage = () => {
       <section className="card">
         <h2>Add Arena</h2>
         <form onSubmit={handleCreateArena}>
-          <fieldset disabled={formsDisabled}>
+          <fieldset disabled={formsDisabled} className="fieldset">
             <label htmlFor="arena-name">Name</label>
             <input
               id="arena-name"
               value={arenaName}
-              onChange={(event) => setArenaName(event.target.value)}
+              onChange={(e) => setArenaName(e.target.value)}
               required
             />
 
@@ -191,7 +185,7 @@ const AdminPage = () => {
             <input
               id="arena-description"
               value={arenaDescription}
-              onChange={(event) => setArenaDescription(event.target.value)}
+              onChange={(e) => setArenaDescription(e.target.value)}
             />
 
             <label htmlFor="arena-capacity">Capacity (optional)</label>
@@ -199,11 +193,11 @@ const AdminPage = () => {
               id="arena-capacity"
               type="number"
               value={arenaCapacity}
-              onChange={(event) => setArenaCapacity(event.target.value)}
+              onChange={(e) => setArenaCapacity(e.target.value)}
               min="0"
             />
 
-            <button type="submit">Create Arena</button>
+            <button className="button" type="submit">Create Arena</button>
           </fieldset>
         </form>
       </section>
@@ -211,15 +205,13 @@ const AdminPage = () => {
       <section className="card">
         <h2>Current Players</h2>
         {players.length === 0 ? (
-          <p>No players created yet.</p>
+          <p className="empty">No players created yet.</p>
         ) : (
-          <ul>
+          <ul className="list">
             {players.map((p) => (
               <li key={p.id}>
                 {p.codename}
-                {p.passcode ? (
-                  <span className="muted"> — passcode: {p.passcode}</span>
-                ) : null}
+                {p.passcode ? <span className="muted"> — passcode: {p.passcode}</span> : null}
               </li>
             ))}
           </ul>
@@ -229,18 +221,18 @@ const AdminPage = () => {
       <section className="card">
         <h2>Current Arenas</h2>
         {arenasError ? (
-          <p>Failed to load arenas.</p>
+          <p className="error">Failed to load arenas.</p>
         ) : arenasLoading ? (
           <p>Loading arenas...</p>
         ) : arenas.length === 0 ? (
-          <p>No arenas yet.</p>
+          <p className="empty">No arenas created yet.</p>
         ) : (
-          <ul>
+          <ul className="list">
             {arenas.map((arena) => (
               <li key={arena.id}>
-                {arena.name}
-                {arena.description ? ` — ${arena.description}` : ""}
-                {arena.capacity ? ` (capacity ${arena.capacity})` : ""}
+                <strong>{arena.name}</strong>
+                {arena.description ? <span className="muted"> — {arena.description}</span> : null}
+                {arena.capacity ? <span className="muted"> (capacity {arena.capacity})</span> : null}
               </li>
             ))}
           </ul>
