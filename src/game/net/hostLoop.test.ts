@@ -47,8 +47,20 @@ describe("startHostLoop combat", () => {
 
       const nowIso = new Date().toISOString();
       presenceCallback?.([
-        { playerId: "p1", authUid: "p1", codename: "Alpha", lastSeen: nowIso } as ArenaPresenceEntry,
-        { playerId: "p2", authUid: "p2", codename: "Beta", lastSeen: nowIso } as ArenaPresenceEntry,
+        {
+          presenceId: "p1",
+          playerId: "p1",
+          authUid: "p1",
+          codename: "Alpha",
+          lastSeen: nowIso,
+        } as ArenaPresenceEntry,
+        {
+          presenceId: "p2",
+          playerId: "p2",
+          authUid: "p2",
+          codename: "Beta",
+          lastSeen: nowIso,
+        } as ArenaPresenceEntry,
       ]);
 
       const commands: Record<string, ArenaInputSnapshot> = {
