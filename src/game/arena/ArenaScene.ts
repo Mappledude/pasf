@@ -80,6 +80,7 @@ export default class ArenaScene extends Phaser.Scene {
   // role/seat (optional UI later)
   private isHost = false;
   private seat?: "A" | "B";
+  private localAttackSeq = 0;
 
   constructor() {
     super("Arena");
@@ -89,6 +90,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.arenaId = data.arenaId;
     this.me = data.me;
     this.spawn = data.spawn;
+    this.localAttackSeq = 0;
   }
 
   create() {
@@ -100,6 +102,7 @@ export default class ArenaScene extends Phaser.Scene {
     // Local player visuals + physics
     this.player = new Player(this, this.spawn.x, this.spawn.y);
     this.player.healFull();
+    this.player.on("player:attack", this.handlePlayerAttack, this);
 
     if (this.ground && this.player) {
       this.physics.add.collider(this.player.sprite, this.ground);
@@ -153,7 +156,7 @@ export default class ArenaScene extends Phaser.Scene {
 
     // Publish inputs to the channel (no state writes from this client)
     const flags = this.player.getInputFlags(); // { left,right,up,attack1,attack2,... }
-    this.channel?.publishInputs({ ...flags, codename: this.me.codename });
+    this.channel?.publishInputs({ ...flags, codename: this.me.codename, attackSeq: this.localAttackSeq });
 
     // Render from authoritative snapshots (interpolated)
     this.applyInterpolatedState();
@@ -466,6 +469,11 @@ export default class ArenaScene extends Phaser.Scene {
     this.remoteActors.delete(id);
   }
 
+  private handlePlayerAttack() {
+    this.localAttackSeq += 1;
+    this.channel?.publishInputs({ attackSeq: this.localAttackSeq });
+  }
+
   private ensureRemoteActor(id: string): RemoteActorState {
     let meta = this.remoteActors.get(id);
     if (!meta) {
@@ -647,7 +655,10 @@ export default class ArenaScene extends Phaser.Scene {
     }
     this.koTween?.stop();
 
-    this.player?.destroy();
+    if (this.player) {
+      this.player.off("player:attack", this.handlePlayerAttack, this);
+      this.player.destroy();
+    }
     this.player = undefined;
 
     for (const remote of this.remoteActors.values()) {

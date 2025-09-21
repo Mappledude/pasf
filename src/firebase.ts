@@ -180,6 +180,8 @@ export type ArenaPlayerState = {
   facing: "L" | "R";
   anim?: string;
   hp: number;
+  attackActiveUntil?: number;
+  canAttackAt?: number;
 };
 
 export interface ArenaInputSnapshot {
@@ -189,6 +191,7 @@ export interface ArenaInputSnapshot {
   right?: boolean;
   jump?: boolean;
   attack?: boolean;
+  attackSeq?: number;
   updatedAt?: ISODate;
 }
 
@@ -200,6 +203,8 @@ export interface ArenaEntityState {
   facing: "L" | "R";
   hp: number;
   name?: string;
+  attackActiveUntil?: number;
+  canAttackAt?: number;
 }
 
 export interface ArenaStateWrite {
@@ -684,6 +689,7 @@ const serializeInputSnapshot = (snap: QueryDocumentSnapshot): ArenaInputSnapshot
     right: typeof data.right === "boolean" ? data.right : undefined,
     jump: typeof data.jump === "boolean" ? data.jump : undefined,
     attack: typeof data.attack === "boolean" ? data.attack : undefined,
+    attackSeq: typeof data.attackSeq === "number" ? data.attackSeq : undefined,
     updatedAt: readTimestamp(data.updatedAt),
   };
 };
@@ -748,6 +754,7 @@ export interface ArenaInputWrite {
   jump?: boolean;
   attack?: boolean;
   codename?: string;
+  attackSeq?: number;
 }
 
 export async function writeArenaInput(
@@ -765,6 +772,7 @@ export async function writeArenaInput(
   if (typeof input.right === "boolean") payload.right = input.right;
   if (typeof input.jump === "boolean") payload.jump = input.jump;
   if (typeof input.attack === "boolean") payload.attack = input.attack;
+  if (typeof input.attackSeq === "number") payload.attackSeq = input.attackSeq;
   if (input.codename) payload.codename = input.codename;
   await setDoc(ref, payload, { merge: true });
 }

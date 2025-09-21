@@ -39,6 +39,7 @@ export function createMatchChannel(options: CreateMatchChannelOptions): MatchCha
         right: !!payload.right,
         jump: !!payload.jump || !!payload.up,
         attack: !!payload.attack || !!payload.attack1 || !!payload.attack2,
+        attackSeq: typeof payload.attackSeq === "number" ? payload.attackSeq : undefined,
         codename: typeof payload.codename === "string" ? payload.codename : undefined,
       });
     },

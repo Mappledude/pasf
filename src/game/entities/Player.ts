@@ -254,6 +254,7 @@ export class Player extends Phaser.Events.EventEmitter {
     this.attackTimer = ATTACK_DURATION;
     this.attackCooldown = ATTACK_COOLDOWN;
     this.attackConsumed = false;
+    this.emit("player:attack", { facing: this.facing });
   }
 
   refreshRig() {
