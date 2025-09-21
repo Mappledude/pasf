@@ -1,16 +1,62 @@
-import { doc, getDoc, setDoc, serverTimestamp, type DocumentReference } from "firebase/firestore";
-import { db } from "../firebase";
+import {
+  doc, getDoc, onSnapshot, setDoc, serverTimestamp,
+  type Firestore, type DocumentReference
+} from "firebase/firestore";
+import type { User } from "firebase/auth";
 
-export function arenaStateDoc(arenaId: string) {
-  // Single document at /arenas/{arenaId}/state
-  return doc(db, "arenas", arenaId, "state") as DocumentReference;
-}
+export type ArenaState = {
+  tick: number;
+  lastUpdate?: unknown; // Firestore Timestamp
+  players: Record<string, { hp: number; updatedAt?: unknown }>;
+};
 
-export async function ensureArenaState(arenaId: string) {
-  const ref = arenaStateDoc(arenaId);
+export const arenaStateRef = (db: Firestore, arenaId: string): DocumentReference =>
+  doc(db, "arenas", arenaId, "state");
+
+export async function ensureArenaState(
+  db: Firestore,
+  arenaId: string
+): Promise<void> {
+  const ref = arenaStateRef(db, arenaId);
   const snap = await getDoc(ref);
   if (!snap.exists()) {
-    await setDoc(ref, { tick: 0, lastUpdate: serverTimestamp(), players: {} }, { merge: true });
+    await setDoc(
+      ref,
+      { tick: 0, players: {}, lastUpdate: serverTimestamp() } as ArenaState,
+      { merge: true }
+    );
   }
-  return ref;
+}
+
+export function watchArenaState(
+  db: Firestore,
+  arenaId: string,
+  onOk: (state: ArenaState | undefined) => void,
+  onErr: (e: unknown) => void
+) {
+  const ref = arenaStateRef(db, arenaId);
+  return onSnapshot(
+    ref,
+    (s) => onOk(s.exists() ? (s.data() as ArenaState) : undefined),
+    onErr
+  );
+}
+
+export async function touchPlayer(
+  db: Firestore,
+  arenaId: string,
+  user: User,
+  initHp = 100
+) {
+  const ref = arenaStateRef(db, arenaId);
+  await setDoc(
+    ref,
+    {
+      lastUpdate: serverTimestamp(),
+      players: {
+        [user.uid]: { hp: initHp, updatedAt: serverTimestamp() },
+      },
+    },
+    { merge: true }
+  );
 }
