@@ -143,7 +143,7 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
     if (stopped) return;
     const seen = new Set<string>();
     for (const snapshot of snapshots) {
-      const uid = snapshot.playerId;
+      const uid = snapshot.presenceId ?? snapshot.playerId;
       if (!uid) continue;
       const previous = inputs.get(uid);
       const attackSeq =
@@ -172,7 +172,9 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
       }
     }
     logger.info?.(
-      `[INPUT] count=${snapshots.length} uids=${snapshots.map((snap) => snap.playerId).join(",")}`,
+      `[INPUT] count=${snapshots.length} uids=${snapshots
+        .map((snap) => snap.presenceId ?? snap.playerId)
+        .join(",")}`,
     );
   };
 

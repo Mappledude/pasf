@@ -123,7 +123,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.textures.on(Phaser.Textures.Events.ADD, this.textureAddHandler, this);
 
     // Networking channel (handles inputs + snapshot subscription internally)
-    this.channel = createMatchChannel({ arenaId: this.arenaId });
+    this.channel = createMatchChannel({ arenaId: this.arenaId, presenceId: this.me.id });
 
     // Role/seat (if the channel exposes these)
     this.channel.onRoleChange?.((role) => {
