@@ -1,18 +1,20 @@
 import Phaser from "phaser";
-import {
-  createArenaSync,
-  type ArenaLastEvent,
-  type ArenaPhase,
-  type ArenaPlayerFrame,
-  type ArenaStateSnapshot,
-  type ArenaSync,
-} from "../net/arenaSync";
+
 import { Player } from "../entities/Player";
 import { RemoteOpponent } from "../entities/RemoteOpponent";
+
+// Host-authoritative networking (no peer state writes)
+import {
+  createMatchChannel,
+  type MatchChannel,
+  type AuthoritativeSnapshot,
+} from "../net/matchChannel";
+import { SnapshotBuffer } from "../net/snapshotBuffer";
 
 const WORLD_WIDTH = 960;
 const WORLD_HEIGHT = 540;
 const GROUND_HEIGHT = 40;
+
 export interface ArenaSceneConfig {
   arenaId: string;
   me: { id: string; codename: string };
@@ -27,20 +29,24 @@ export default class ArenaScene extends Phaser.Scene {
   private player?: Player;
   private opponent?: RemoteOpponent;
   private ground?: Phaser.GameObjects.Rectangle;
+
   private hudText?: Phaser.GameObjects.Text;
   private oppHudText?: Phaser.GameObjects.Text;
   private koText?: Phaser.GameObjects.Text;
   private koTween?: Phaser.Tweens.Tween;
 
-  private sync?: ArenaSync;
-  private unsubscribe?: () => void;
-  private opponentId?: string;
-  private controlsLocked = false;
-  private latestOpponentName = "";
-  private currentPhase: ArenaPhase = "lobby";
-  private lastKoTick?: number;
-  private meFrame?: ArenaPlayerFrame;
-  private opponentFrame?: ArenaPlayerFrame;
+private textureAddHandler?: (key: string, texture: Phaser.Textures.Texture) => void;
+
+// Net & interpolation
+private channel?: MatchChannel;
+private snapbuf = new SnapshotBuffer<AuthoritativeSnapshot>(4);
+private latestOpponentName = "";
+private opponentId?: string;
+
+// role/seat (optional UI later)
+private isHost = false;
+private seat?: "A" | "B";
+
 
   constructor() {
     super("Arena");
@@ -58,6 +64,7 @@ export default class ArenaScene extends Phaser.Scene {
 
     this.createGround();
 
+    // Local player and remote opponent visuals
     this.player = new Player(this, this.spawn.x, this.spawn.y);
     this.player.healFull();
 
@@ -67,22 +74,40 @@ export default class ArenaScene extends Phaser.Scene {
       this.physics.add.collider(this.player.sprite, this.ground);
     }
 
-    if (this.player && this.opponent) {
-      this.physics.add.overlap(
-        this.player.attackHitbox,
-        this.opponent.sprite,
-        this.handleAttackOverlap,
-        undefined,
-        this,
-      );
-    }
-
     this.createHud();
     this.createKoText();
 
-    this.sync = createArenaSync({ arenaId: this.arenaId, meId: this.me.id });
-    this.unsubscribe = this.sync.subscribe(this.handleArenaState);
+    // Promote rigs when textures are added (e.g., when atlases load later)
+    this.tryPromoteFighterRigs();
+    this.textureAddHandler = () => {
+      this.tryPromoteFighterRigs();
+      this.player?.handleTextureUpdate();
+      this.opponent?.handleTextureUpdate();
+    };
+    this.textures.on(Phaser.Textures.Events.ADD, this.textureAddHandler, this);
 
+    // Networking channel (handles inputs + snapshot subscription internally)
+    this.channel = createMatchChannel({ arenaId: this.arenaId });
+
+    // Role/seat (if the channel exposes these)
+    this.channel.onRoleChange?.((role) => {
+      this.isHost = role === "host";
+    });
+    this.channel.onSeatChange?.((seat) => {
+      this.seat = seat;
+    });
+
+    // Authoritative snapshot stream → push into interpolation buffer
+    this.channel.onSnapshot((snap) => {
+      this.snapbuf.push(snap, this.time.now);
+      // KO flash when my hp crosses >0 → <=0 (visual only; respawn is authoritative)
+      const meNode = snap.players?.[this.me.id];
+      if (meNode && this.player && this.player.hp > 0 && (meNode.hp ?? 100) <= 0) {
+        this.flashKo();
+      }
+    });
+
+    // Clean teardown
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.handleShutdown, this);
     this.events.once(Phaser.Scenes.Events.DESTROY, this.handleShutdown, this);
   }
@@ -91,49 +116,83 @@ export default class ArenaScene extends Phaser.Scene {
     const dt = delta / 1000;
     if (!this.player) return;
 
+    // Local simulation step for inputs/animations (visual)
     this.player.update(dt);
 
-    const body = this.player.body;
-    const facing = this.player.facing === 1 ? "R" : "L";
-    this.sync?.updateLocalState({
-      codename: this.me.codename,
-      x: this.player.sprite.x,
-      y: this.player.sprite.y,
-      vx: body.velocity.x,
-      vy: body.velocity.y,
-      facing,
-      anim: this.player.isAttackActive() ? "attack" : undefined,
-      hp: this.player.hp,
-    });
+// Publish inputs to the channel (no state writes from this client)
+const flags = this.player.getInputFlags(); // { left,right,up,attack1,attack2,... }
+this.channel?.publishInputs({ ...flags, codename: this.me.codename });
+
+// Render from authoritative snapshots (interpolated)
+this.applyInterpolatedState();
+}
+
+/** Apply interpolated authoritative snapshot to entities (no local prediction). */
+private applyInterpolatedState() {
+  const view = this.snapbuf.getInterpolated(this.time.now);
+  if (!view) return;
+
+  const players = view.players ?? {};
+
+  // Me (local fighter visuals mirror authoritative state)
+  const meState = players[this.me.id];
+  if (meState && this.player) {
+    const x = meState.x ?? this.spawn.x;
+    const y = meState.y ?? this.spawn.y;
+    this.player.setPosition(x, y);
+    this.player.setFacing(meState.facing === "L" ? "L" : "R");
+    if (typeof meState.hp === "number") this.player.setHp(meState.hp);
+    if (meState.anim) this.player.playAnim(meState.anim);
   }
 
-  private handleAttackOverlap = () => {
-    if (!this.player) return;
-    if (!this.player.isAttackActive()) return;
-    this.player.registerHit();
-  };
+  // Pick first other player as opponent (temporary until seats UI wires in)
+  const otherId = Object.keys(players).find((id) => id !== this.me.id);
+  if (!otherId) {
+    this.opponentId = undefined;
+    this.opponent?.setActive(false);
+    this.latestOpponentName = "";
+    this.updateHud();
+    return;
+  }
 
-  private handleArenaState = (state?: ArenaStateSnapshot) => {
-    this.applyPhaseUpdate(state?.phase, state?.lastEvent);
+  const opp = players[otherId]!;
+  this.opponentId = otherId;
+  this.opponent?.setActive(true);
+  this.opponent?.setCodename(opp.codename ?? "Agent");
+  this.opponent?.setState({
+    x: opp.x ?? this.spawn.x,
+    y: opp.y ?? this.spawn.y,
+    facing: opp.facing === "L" ? "L" : "R",
+    hp: typeof opp.hp === "number" ? opp.hp : (this.opponent?.hp ?? 100),
+    anim: opp.anim,
+    vx: opp.vx,
+    vy: opp.vy,
+  });
 
-    const players = state?.players ?? {};
-    const meState = players?.[this.me.id];
-    this.meFrame = meState ?? undefined;
+  if (this.opponent && typeof opp.hp === "number" && this.opponent.hp > 0 && opp.hp <= 0) {
+    this.flashKo();
+  }
 
+  this.latestOpponentName = opp.codename ?? "Agent";
+  this.updateHud();
+}
+
+
+    // Me (local fighter visuals mirror authoritative state)
+    const meState = players[this.me.id];
     if (meState && this.player) {
-      if (typeof meState.hp === "number") {
-        this.player.setHp(meState.hp);
-      }
-      if (meState.pos && this.currentPhase !== "play") {
-        this.player.setPosition(meState.pos.x, meState.pos.y);
-      }
+const x = meState.x ?? this.spawn.x;
+const y = meState.y ?? this.spawn.y;
+this.player.setPosition(x, y);
+this.player.setFacing(meState.facing === "L" ? "L" : "R");
+if (typeof meState.hp === "number") this.player.setHp(meState.hp);
+if (meState.anim) this.player.playAnim(meState.anim);
+
     }
 
-    const otherIds = Object.keys(players ?? {}).filter((id) => id !== this.me.id);
-    otherIds.sort();
-    const targetOpponentId = otherIds[0];
-
-    if (!targetOpponentId) {
+    // Pick first other player as opponent (temporary until seats UI wires in)
+    const otherId = Object.keys(players).find((id) => id !== this.me.id);
+    if (!otherId) {
       this.opponentId = undefined;
       this.opponentFrame = undefined;
       this.opponent?.setActive(false);
@@ -141,50 +200,38 @@ export default class ArenaScene extends Phaser.Scene {
       this.updateHud();
       return;
     }
+const opp = players[otherId]!;
+this.opponentId = otherId;
+this.opponent?.setActive(true);
+this.opponent?.setCodename(opp.codename ?? "Agent");
+this.opponent?.setState({
+  x: opp.x ?? this.spawn.x,
+  y: opp.y ?? this.spawn.y,
+  facing: opp.facing === "L" ? "L" : "R",
+  hp: typeof opp.hp === "number" ? opp.hp : (this.opponent?.hp ?? 100),
+  anim: opp.anim,
+  vx: opp.vx,
+  vy: opp.vy,
+});
 
-    this.opponentId = targetOpponentId;
-    const opponentState = players?.[targetOpponentId];
-    if (!opponentState) {
-      this.opponentFrame = undefined;
-      this.updateHud();
-      return;
-    }
+if (this.opponent && typeof opp.hp === "number" && this.opponent.hp > 0 && opp.hp <= 0) {
+  this.flashKo();
+}
 
-    this.opponentFrame = opponentState;
-    const codename = opponentState.codename ?? this.latestOpponentName || "Agent";
-    this.latestOpponentName = codename;
-    this.opponent?.setCodename(codename);
+this.latestOpponentName = opp.codename ?? "Agent";
+this.updateHud();
 
-    const pos = opponentState.pos ?? this.spawn;
-    this.opponent?.setState({
-      x: pos.x,
-      y: pos.y,
-      facing: opponentState.dir === -1 ? "L" : "R",
-      hp: typeof opponentState.hp === "number" ? opponentState.hp : undefined,
-    });
-
-    this.updateHud();
-  };
-
-  private applyPhaseUpdate(phase?: ArenaPhase, lastEvent?: ArenaLastEvent) {
-    if (phase && phase !== this.currentPhase) {
-      this.currentPhase = phase;
-      const shouldLock = phase !== "play";
-      if (this.player) {
-        this.player.setControlsEnabled(!shouldLock);
-      }
-      this.controlsLocked = shouldLock;
-    }
-
-    if (lastEvent?.type === "ko" && lastEvent.tick !== this.lastKoTick) {
-      this.flashKo();
-      this.lastKoTick = lastEvent.tick;
-    }
   }
 
   private createGround() {
     const groundY = WORLD_HEIGHT - GROUND_HEIGHT / 2;
-    this.ground = this.add.rectangle(WORLD_WIDTH / 2, groundY, WORLD_WIDTH, GROUND_HEIGHT, 0x1f2937);
+    this.ground = this.add.rectangle(
+      WORLD_WIDTH / 2,
+      groundY,
+      WORLD_WIDTH,
+      GROUND_HEIGHT,
+      0x1f2937
+    );
     this.physics.add.existing(this.ground, true);
     const body = this.ground.body as Phaser.Physics.Arcade.StaticBody;
     body.updateFromGameObject();
@@ -210,39 +257,20 @@ export default class ArenaScene extends Phaser.Scene {
 
   private updateHud() {
     if (!this.hudText) return;
-    const myHpSource =
-      typeof this.meFrame?.hp === "number"
-        ? this.meFrame.hp
-        : this.player
-        ? this.player.hp
-        : 0;
-    const myStocks = this.meFrame?.stocks;
-    let myText = `You (${this.me.codename}) HP: ${Math.round(myHpSource)}`;
-    if (typeof myStocks === "number") {
-      myText += ` · Stocks: ${myStocks}`;
-    }
-    this.hudText.setText(myText);
+const myHp = this.player ? Math.round(this.player.hp) : 0;
+const opponentHp =
+  this.opponent && this.opponent.sprite.visible ? Math.round(this.opponent.hp) : null;
 
-    if (!this.oppHudText) {
-      return;
-    }
+this.hudText.setText(`You (${this.me.codename}) HP: ${myHp}`);
+if (this.oppHudText) {
+  if (opponentHp === null) {
+    this.oppHudText.setText("Waiting for opponent...");
+  } else {
+    const name = this.latestOpponentName || "Opponent";
+    this.oppHudText.setText(`${name} HP: ${opponentHp}`);
+  }
+}
 
-    if (!this.opponentId || !this.opponentFrame) {
-      this.oppHudText.setText("Waiting for opponent...");
-      return;
-    }
-
-    const oppHpSource =
-      typeof this.opponentFrame.hp === "number"
-        ? this.opponentFrame.hp
-        : this.opponent
-        ? this.opponent.hp
-        : 0;
-    const oppStocks = this.opponentFrame.stocks;
-    const name = this.latestOpponentName || this.opponentFrame.codename || "Opponent";
-    let oppText = `${name} HP: ${Math.round(oppHpSource)}`;
-    if (typeof oppStocks === "number") {
-      oppText += ` · Stocks: ${oppStocks}`;
     }
     this.oppHudText.setText(oppText);
   }
@@ -276,22 +304,38 @@ export default class ArenaScene extends Phaser.Scene {
   }
 
   private handleShutdown() {
+    if (this.textureAddHandler) {
+      this.textures.off(Phaser.Textures.Events.ADD, this.textureAddHandler, this);
+      this.textureAddHandler = undefined;
+    }
     this.koTween?.stop();
+
     this.player?.destroy();
     this.player = undefined;
+
     this.opponent?.destroy();
     this.opponent = undefined;
+
     this.hudText?.destroy();
     this.hudText = undefined;
+
     this.oppHudText?.destroy();
     this.oppHudText = undefined;
+
     this.ground?.destroy();
     this.ground = undefined;
+
     this.koText?.destroy();
     this.koText = undefined;
-    this.sync?.destroy();
-    this.sync = undefined;
-    this.unsubscribe?.();
-    this.unsubscribe = undefined;
+
+    this.channel?.destroy?.();
+    this.channel = undefined;
+
+    this.snapbuf.clear();
+  }
+
+  private tryPromoteFighterRigs() {
+    this.player?.refreshRig();
+    this.opponent?.refreshRig();
   }
 }

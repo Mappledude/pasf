@@ -22,6 +22,7 @@ import {
   orderBy,
   onSnapshot,
   runTransaction,
+  type QueryDocumentSnapshot,
   type Unsubscribe,
 } from "firebase/firestore";
 
@@ -150,6 +151,13 @@ export interface ArenaPresenceEntry {
   joinedAt?: ISODate;
 }
 
+export interface ArenaSeatAssignment {
+  seatNo: number;
+  playerId: string;
+  uid: string;
+  joinedAt?: ISODate;
+}
+
 export type ArenaPlayerState = {
   codename: string;
   x: number;
@@ -160,6 +168,33 @@ export type ArenaPlayerState = {
   anim?: string;
   hp: number;
 };
+
+export interface ArenaInputSnapshot {
+  playerId: string;
+  codename?: string;
+  left?: boolean;
+  right?: boolean;
+  jump?: boolean;
+  attack?: boolean;
+  updatedAt?: ISODate;
+}
+
+export interface ArenaStateWritePlayer {
+  codename?: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  facing: "L" | "R";
+  hp: number;
+  anim?: string;
+}
+
+export interface ArenaStateWrite {
+  tick: number;
+  tMs: number;
+  players: Record<string, ArenaStateWritePlayer>;
+}
 
 export interface LeaderboardEntry {
   id: string;
@@ -367,6 +402,108 @@ export const leaveArena = async (arenaId: string, presenceId: string) => {
   await deleteDoc(doc(db, `arenas/${arenaId}/presence/${presenceId}`));
 };
 
+const seatDoc = (arenaId: string, seatNo: number) =>
+  doc(db, `arenas/${arenaId}/seats/${seatNo}`);
+
+const normalizeSeatPlayerId = (playerId: string | null | undefined, uid: string) =>
+  playerId && playerId.trim().length > 0 ? playerId : uid;
+
+export const claimArenaSeat = async (
+  arenaId: string,
+  seatNo: number,
+  identity: { playerId?: string | null; uid: string },
+) => {
+  await ensureAnonAuth();
+  const seatId = `${seatNo}`;
+  const playerId = normalizeSeatPlayerId(identity.playerId, identity.uid);
+  const seatRef = seatDoc(arenaId, seatNo);
+  const seatsCollection = collection(db, `arenas/${arenaId}/seats`);
+  const seatSnapshot = await getDocs(seatsCollection);
+  const seatRefs = seatSnapshot.docs.map((snap) => snap.ref);
+
+  await runTransaction(db, async (tx) => {
+    const currentSnap = await tx.get(seatRef);
+    if (currentSnap.exists()) {
+      const data = currentSnap.data() as any;
+      const alreadyMine =
+        data?.uid === identity.uid || (playerId && data?.playerId === playerId);
+      if (!alreadyMine) {
+        throw new Error("Seat is already occupied.");
+      }
+    }
+
+    for (const ref of seatRefs) {
+      if (ref.id === seatId) continue;
+      const otherSnap = await tx.get(ref);
+      if (!otherSnap.exists()) continue;
+      const data = otherSnap.data() as any;
+      const matchesUid = data?.uid === identity.uid;
+      const matchesPlayer = playerId && data?.playerId === playerId;
+      if (matchesUid || matchesPlayer) {
+        tx.delete(ref);
+      }
+    }
+
+    tx.set(
+      seatRef,
+      {
+        playerId,
+        uid: identity.uid,
+        joinedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+  });
+};
+
+export const releaseArenaSeat = async (
+  arenaId: string,
+  seatNo: number,
+  identity?: { playerId?: string | null; uid: string },
+) => {
+  await ensureAnonAuth();
+  const seatRef = seatDoc(arenaId, seatNo);
+  const playerId = identity ? normalizeSeatPlayerId(identity.playerId, identity.uid) : null;
+
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(seatRef);
+    if (!snap.exists()) return;
+    const data = snap.data() as any;
+    if (identity) {
+      const matchesUid = data?.uid === identity.uid;
+      const matchesPlayer = playerId && data?.playerId === playerId;
+      if (!matchesUid && !matchesPlayer) {
+        return;
+      }
+    }
+    tx.delete(seatRef);
+  });
+};
+
+export const watchArenaSeats = (
+  arenaId: string,
+  cb: (seats: ArenaSeatAssignment[]) => void,
+): Unsubscribe => {
+  const seatsRef = collection(db, `arenas/${arenaId}/seats`);
+  return onSnapshot(seatsRef, (snapshot) => {
+    const seats = snapshot.docs
+      .map((docSnap) => {
+        const data = docSnap.data() as any;
+        const seatNo = Number.parseInt(docSnap.id, 10);
+        if (Number.isNaN(seatNo)) return null;
+        return {
+          seatNo,
+          playerId: data?.playerId ?? "",
+          uid: data?.uid ?? "",
+          joinedAt: data?.joinedAt?.toDate?.().toISOString?.(),
+        } as ArenaSeatAssignment;
+      })
+      .filter((seat): seat is ArenaSeatAssignment => !!seat)
+      .sort((a, b) => a.seatNo - b.seatNo);
+    cb(seats);
+  });
+};
+
 export const watchArenaPresence = (
   arenaId: string,
   cb: (players: ArenaPresenceEntry[]) => void,
@@ -392,6 +529,33 @@ export const watchArenaPresence = (
 
 const arenaStateDoc = (arenaId: string) =>
   doc(db, "arenas", arenaId, "state", "current");
+
+const arenaInputDoc = (arenaId: string, playerId: string) =>
+  doc(db, "arenas", arenaId, "inputs", playerId);
+
+const arenaInputsCollection = (arenaId: string) =>
+  collection(db, "arenas", arenaId, "inputs");
+
+const readTimestamp = (value: unknown): ISODate | undefined => {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const date = (value as { toDate?: () => Date }).toDate?.();
+  return date?.toISOString();
+};
+
+const serializeInputSnapshot = (snap: QueryDocumentSnapshot): ArenaInputSnapshot => {
+  const data = snap.data() as Record<string, unknown>;
+  return {
+    playerId: (data.playerId as string) ?? snap.id,
+    codename: (data.codename as string) ?? undefined,
+    left: typeof data.left === "boolean" ? data.left : undefined,
+    right: typeof data.right === "boolean" ? data.right : undefined,
+    jump: typeof data.jump === "boolean" ? data.jump : undefined,
+    attack: typeof data.attack === "boolean" ? data.attack : undefined,
+    updatedAt: readTimestamp(data.updatedAt),
+  };
+};
 
 export async function initArenaPlayerState(
   arenaId: string,
@@ -426,22 +590,25 @@ export async function updateArenaPlayerState(
   arenaId: string,
   meId: string,
   partial: Partial<ArenaPlayerState>,
+  options?: { tick?: number },
 ) {
   await ensureAnonAuth();
   const ref = arenaStateDoc(arenaId);
-  await setDoc(
-    ref,
-    {
-      players: {
-        [meId]: {
-          ...partial,
-          updatedAt: serverTimestamp(),
-        },
+  const payload: Record<string, unknown> = {
+    players: {
+      [meId]: {
+        ...partial,
+        updatedAt: serverTimestamp(),
       },
-      lastUpdate: serverTimestamp(),
     },
-    { merge: true },
-  );
+    lastUpdate: serverTimestamp(),
+  };
+
+  if (typeof options?.tick === "number") {
+    payload.tick = options.tick;
+  }
+
+  await setDoc(ref, payload, { merge: true });
 }
 
 export function watchArenaState(arenaId: string, cb: (state: any) => void) {
@@ -471,6 +638,71 @@ export function watchArenaState(arenaId: string, cb: (state: any) => void) {
       unsubscribe = null;
     }
   };
+}
+
+export interface ArenaInputWrite {
+  left?: boolean;
+  right?: boolean;
+  jump?: boolean;
+  attack?: boolean;
+  codename?: string;
+}
+
+export async function writeArenaInput(
+  arenaId: string,
+  playerId: string,
+  input: ArenaInputWrite,
+): Promise<void> {
+  await ensureAnonAuth();
+  const ref = arenaInputDoc(arenaId, playerId);
+  const payload: Record<string, unknown> = {
+    playerId,
+    updatedAt: serverTimestamp(),
+  };
+  if (typeof input.left === "boolean") payload.left = input.left;
+  if (typeof input.right === "boolean") payload.right = input.right;
+  if (typeof input.jump === "boolean") payload.jump = input.jump;
+  if (typeof input.attack === "boolean") payload.attack = input.attack;
+  if (input.codename) payload.codename = input.codename;
+  await setDoc(ref, payload, { merge: true });
+}
+
+export async function fetchArenaInputs(arenaId: string): Promise<ArenaInputSnapshot[]> {
+  await ensureAnonAuth();
+  const snapshot = await getDocs(arenaInputsCollection(arenaId));
+  return snapshot.docs.map(serializeInputSnapshot);
+}
+
+export function watchArenaInputs(
+  arenaId: string,
+  cb: (inputs: ArenaInputSnapshot[]) => void,
+): Unsubscribe {
+  const q = query(arenaInputsCollection(arenaId));
+  return onSnapshot(q, (snapshot) => {
+    cb(snapshot.docs.map(serializeInputSnapshot));
+  });
+}
+
+export async function writeArenaState(arenaId: string, state: ArenaStateWrite): Promise<void> {
+  await ensureAnonAuth();
+  const ref = arenaStateDoc(arenaId);
+  const players: Record<string, Record<string, unknown>> = {};
+  for (const [playerId, data] of Object.entries(state.players)) {
+    players[playerId] = {
+      ...data,
+      updatedAt: serverTimestamp(),
+    };
+  }
+  await setDoc(
+    ref,
+    {
+      tick: state.tick,
+      tMs: state.tMs,
+      players,
+      lastUpdate: serverTimestamp(),
+    },
+    { merge: true },
+  );
 }
 
 export async function applyDamage(arenaId: string, targetPlayerId: string, amount: number) {

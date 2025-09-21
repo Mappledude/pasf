@@ -28,6 +28,13 @@ export interface ArenaPresenceEntry {
   profileId?: string;
 }
 
+export interface ArenaSeatAssignment {
+  seatNo: number;
+  playerId: string;
+  uid: string;
+  joinedAt?: string;
+}
+
 export interface LeaderboardEntry {
   id: string;
   playerId: string;
