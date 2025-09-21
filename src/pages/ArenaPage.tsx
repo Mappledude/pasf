@@ -4,12 +4,9 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   db,
   ensureAnonAuth,
-  joinArena,
   heartbeatArenaPresence,
+  joinArena,
   leaveArena,
-  claimArenaSeat,       // remove if not used
-  releaseArenaSeat,     // remove if not used
-  initArenaPlayerState, // remove if not used
   watchLeaderboard,
 } from "../firebase";
 import type { LeaderboardEntry } from "../firebase";
