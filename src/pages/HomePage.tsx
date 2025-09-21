@@ -16,6 +16,8 @@ const ArenaListItem = ({ arena, onJoin }: ArenaListItemProps) => {
 const { loading: presenceLoading } = useArenaPresence(arena.id);
 const { names: rosterNames, count: rosterCount } = usePresenceRoster(arena.id);
 
+const overflow = Math.max(rosterCount - rosterNames.length, 0);
+
 // "Ben, Zane, Asha (+2)" style chip
 const formattedRoster = useMemo(() => {
   const head = rosterNames.slice(0, 3).join(", ");
