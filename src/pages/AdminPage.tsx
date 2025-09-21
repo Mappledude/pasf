@@ -3,10 +3,10 @@ import {
   createArena,
   createPlayer,
   ensureBossProfile,
-  listArenas,
   listPlayers,
 } from "../firebase";
-import type { Arena, PlayerProfile } from "../types/models";
+import type { PlayerProfile } from "../types/models";
+import { useArenas } from "../utils/useArenas";
 
 const AdminPage = () => {
   const [bossName, setBossName] = useState("Boss");
@@ -15,14 +15,14 @@ const AdminPage = () => {
   const [arenaName, setArenaName] = useState("");
   const [arenaDescription, setArenaDescription] = useState("");
   const [arenaCapacity, setArenaCapacity] = useState<string>("");
-  const [arenas, setArenas] = useState<Arena[]>([]);
   const [players, setPlayers] = useState<PlayerProfile[]>([]);
   const [status, setStatus] = useState<string | null>(null);
+  const { arenas, loading: arenasLoading, error: arenasError } = useArenas();
 
   useEffect(() => {
     const bootstrap = async () => {
       await ensureBossProfile(bossName);
-      await refreshData();
+      await fetchPlayers();
     };
     bootstrap().catch((err) => {
       console.error(err);
@@ -31,9 +31,8 @@ const AdminPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const refreshData = async () => {
-    const [arenaList, playerList] = await Promise.all([listArenas(), listPlayers()]);
-    setArenas(arenaList);
+  const fetchPlayers = async () => {
+    const playerList = await listPlayers();
     setPlayers(playerList);
   };
 
@@ -60,7 +59,7 @@ const AdminPage = () => {
       setPlayerCodename("");
       setPlayerPasscode("");
       setStatus("Player created.");
-      await refreshData();
+      await fetchPlayers();
     } catch (err) {
       console.error(err);
       setStatus("Failed to create player");
@@ -80,7 +79,6 @@ const AdminPage = () => {
       setArenaDescription("");
       setArenaCapacity("");
       setStatus("Arena created.");
-      await refreshData();
     } catch (err) {
       console.error(err);
       setStatus("Failed to create arena");
@@ -186,7 +184,11 @@ const AdminPage = () => {
 
       <section className="card">
         <h2>Current Arenas</h2>
-        {arenas.length === 0 ? (
+        {arenasError ? (
+          <p>Failed to load arenas.</p>
+        ) : arenasLoading ? (
+          <p>Loading arenas...</p>
+        ) : arenas.length === 0 ? (
           <p>No arenas yet.</p>
         ) : (
           <ul>
