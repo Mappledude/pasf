@@ -30,7 +30,6 @@ import {
   primePresenceDisplayNameCache,
   usePresenceRoster,
 } from "../utils/useArenaPresence";
-import { usePresenceRoster, formatRosterNames } from "../utils/usePresenceRoster";
 
 import { useAuth } from "../context/AuthContext";
 import TouchControls from "../game/input/TouchControls";
@@ -104,9 +103,9 @@ const formattedRosterNames = useMemo(() => {
     if (!arenaId) return;
     if (presenceLoading) return;
     console.log(
-      `[ARENA] roster arena=${arenaId} n=${roster.length} names=${formattedRosterNames}`,
+      `[ARENA] roster arena=${arenaId} n=${presence.length} names=${formattedRosterNames}`,
     );
-  }, [arenaId, formattedRosterNames, presenceLoading, roster]);
+  }, [arenaId, formattedRosterNames, presence.length, presenceLoading]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
