@@ -18,7 +18,7 @@ export type ArenaState = {
 };
 
 export const arenaStateRef = (db: Firestore, arenaId: string): DocumentReference =>
-  doc(db, "arenas", arenaId, "state");
+  doc(db, "arenas", arenaId, "state", "current");
 
 export async function ensureArenaState(
   db: Firestore,
