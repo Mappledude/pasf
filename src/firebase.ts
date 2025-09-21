@@ -263,15 +263,20 @@ export const loginWithPasscode = async (passcode: string): Promise<PlayerProfile
 };
 
 export const listPlayers = async (): Promise<PlayerProfile[]> => {
+  await ensureAnonAuth();
   const snapshot = await getDocs(collection(db, "players"));
-  return snapshot.docs.map((s) => {
-    const d = s.data() as any;
+  return snapshot.docs.map((docSnap) => {
+    const data = docSnap.data() as any;
+    const { passcode: _ignoredPasscode, ...rest } = data ?? {};
+    const createdAt =
+      data?.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString();
+    const lastActiveAt = data?.lastActiveAt?.toDate?.().toISOString?.();
+
     return {
-      id: s.id,
-      codename: d.codename,
-      passcode: d.passcode,
-      createdAt: d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString(),
-      lastActiveAt: d.lastActiveAt?.toDate?.().toISOString?.(),
+      id: docSnap.id,
+      ...rest,
+      createdAt,
+      lastActiveAt,
     } as PlayerProfile;
   });
 };
