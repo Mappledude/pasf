@@ -41,6 +41,8 @@ export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
+let loggedProjectId = false;
+
 // === DEV EMULATORS (optional) ===
 export const maybeConnectEmulators = () => {
   if (import.meta.env?.DEV && import.meta.env?.VITE_USE_FIREBASE_EMULATORS === "true") {
@@ -55,12 +57,63 @@ export const maybeConnectEmulators = () => {
 };
 
 // === AUTH HELPERS ===
+let pendingAnonAuth: Promise<User> | null = null;
+
 export async function ensureAnonAuth(): Promise<User> {
-  if (!auth.currentUser) {
-    const cred = await signInAnonymously(auth);
-    return cred.user;
+  if (!loggedProjectId) {
+    loggedProjectId = true;
+    const projectId = app.options.projectId;
+    if (projectId && projectId !== "stickfightpa") {
+      console.warn(`[BOOT] projectId = ${projectId} (expected stickfightpa)`);
+    } else {
+      console.info(`[BOOT] projectId = ${projectId ?? "(unknown)"}`);
+    }
   }
-  return auth.currentUser;
+
+  if (auth.currentUser) {
+    console.info(`[AUTH] ensureAnonAuth ok ${auth.currentUser.uid}`);
+    return auth.currentUser;
+  }
+
+  if (pendingAnonAuth) {
+    return pendingAnonAuth;
+  }
+
+  const waitForAuthUser = () =>
+    new Promise<User>((resolve, reject) => {
+      let unsubscribe: () => void = () => {};
+      const timeout = setTimeout(() => {
+        unsubscribe();
+        reject(new Error("Timed out waiting for anonymous auth"));
+      }, 10_000);
+
+      unsubscribe = onAuthStateChanged(
+        auth,
+        (user) => {
+          if (!user) return;
+          clearTimeout(timeout);
+          unsubscribe();
+          console.info(`[AUTH] ensureAnonAuth ok ${user.uid}`);
+          resolve(user);
+        },
+        (error) => {
+          clearTimeout(timeout);
+          unsubscribe();
+          reject(error);
+        },
+      );
+    });
+
+  pendingAnonAuth = (async () => {
+    try {
+      await signInAnonymously(auth);
+      return await waitForAuthUser();
+    } finally {
+      pendingAnonAuth = null;
+    }
+  })();
+
+  return pendingAnonAuth;
 }
 
 export function onAuth(cb: (uid: string | null) => void): () => void {
@@ -195,6 +248,18 @@ export const findPlayerByPasscode = async (passcode: string) => {
     } as PlayerProfile;
   }
   return undefined;
+};
+
+export const loginWithPasscode = async (passcode: string): Promise<PlayerProfile> => {
+  const normalizedPasscode = normalizePasscode(passcode);
+  console.info("[AUTH] loginWithPasscode start");
+  await ensureAnonAuth();
+  const playerProfile = await findPlayerByPasscode(normalizedPasscode);
+  if (!playerProfile) {
+    throw new Error("Invalid passcode. Ask the Boss for access.");
+  }
+  console.info(`[AUTH] loginWithPasscode ok ${playerProfile.id}`);
+  return playerProfile;
 };
 
 export const listPlayers = async (): Promise<PlayerProfile[]> => {

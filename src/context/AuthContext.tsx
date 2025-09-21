@@ -12,10 +12,9 @@ import { useNavigate } from "react-router-dom";
 import {
   ensureAnonAuth,
   onAuth,
-  findPlayerByPasscode,
   updatePlayerActivity,
   maybeConnectEmulators,
-  normalizePasscode,
+  loginWithPasscode,
 } from "../firebase";
 import type { PlayerProfile } from "../types/models";
 
@@ -25,6 +24,7 @@ interface AuthContextValue {
   user: AnyUser;
   player: PlayerProfile | null;
   loading: boolean;
+  authReady: boolean;
   login: (passcode: string) => Promise<PlayerProfile>;
   logout: () => Promise<void>;
 }
@@ -35,17 +35,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const navigate = useNavigate();
   const [user, setUser] = useState<AnyUser>(null);
   const [player, setPlayer] = useState<PlayerProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [authReady, setAuthReady] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     maybeConnectEmulators();
 
-    ensureAnonAuth().catch((e) => console.warn("ensureAnonAuth failed (dev ok):", e));
+    ensureAnonAuth()
+      .catch((e) => {
+        console.warn("ensureAnonAuth failed (dev ok):", e);
+      })
+      .finally(() => {
+        setAuthReady(true);
+      });
 
     const unsubscribe = onAuth((uid) => {
       setUser(uid ? { uid } : null);
       if (!uid) setPlayer(null);
-      setLoading(false);
     });
 
     return unsubscribe;
@@ -53,20 +59,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const login = useCallback(
     async (passcode: string) => {
-      setLoading(true);
+      setBusy(true);
       try {
-        await ensureAnonAuth();
-        const normalizedPasscode = normalizePasscode(passcode);
-        const playerProfile = await findPlayerByPasscode(normalizedPasscode);
-        if (!playerProfile) {
-          throw new Error("Invalid passcode. Ask the Boss for access.");
-        }
+        const playerProfile = await loginWithPasscode(passcode);
         await updatePlayerActivity(playerProfile.id).catch(() => {});
         setPlayer(playerProfile);
         navigate("/");
         return playerProfile;
       } finally {
-        setLoading(false);
+        setBusy(false);
       }
     },
     [navigate],
@@ -77,10 +78,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(null);
   }, []);
 
-  const value = useMemo(
-    () => ({ user, player, loading, login, logout }),
-    [user, player, loading, login, logout],
-  );
+  const value = useMemo(() => {
+    const loading = !authReady || busy;
+    return { user, player, loading, authReady, login, logout };
+  }, [user, player, authReady, busy, login, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
