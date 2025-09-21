@@ -9,7 +9,8 @@ import type {
   Vec2,
 } from './types.js';
 
-const FIXED_DT_MS = 16.6667;
+export const FIXED_STEP_MS = 16.6667;
+const FIXED_DT_MS = FIXED_STEP_MS;
 const HISTORY_MS = 3000;
 const HISTORY_CAP = Math.ceil(HISTORY_MS / FIXED_DT_MS);
 const GRAVITY = 900;
@@ -30,7 +31,7 @@ const PLAYER_SPAWN_POSITIONS: Record<'left' | 'right', Vec2> = {
   right: { x: 760, y: 0 },
 };
 
-const PLAYER_INITIAL_HP = 100;
+export const PLAYER_INITIAL_HP = 100;
 
 interface InternalSim extends Sim {
   _inputs: Record<PlayerId, InputFlags>;
@@ -419,6 +420,42 @@ export function getSnapshot(sim: Sim): Snapshot {
     tMs: sim.snap.tMs,
     players,
   };
+}
+
+export function resetPlayersToSpawn(sim: Sim): void {
+  const internal = ensureInternal(sim);
+  const assignments: Array<{ id: PlayerId; slot: 'left' | 'right'; dir: -1 | 1 }> = [
+    { id: sim.myId, slot: 'left', dir: 1 },
+    { id: sim.oppId, slot: 'right', dir: -1 },
+  ];
+
+  for (const { id, slot, dir } of assignments) {
+    const state = internal.snap.players[id];
+    if (!state) {
+      continue;
+    }
+
+    const spawn = PLAYER_SPAWN_POSITIONS[slot];
+    state.pos.x = spawn.x;
+    state.pos.y = spawn.y;
+    state.vel.x = 0;
+    state.vel.y = 0;
+    state.dir = dir;
+    state.hp = PLAYER_INITIAL_HP;
+    state.attackActiveUntil = 0;
+    state.canAttackAt = 0;
+    state.grounded = true;
+
+    internal._inputs[id] = {};
+    internal._prevJump[id] = false;
+    internal._prevAttack[id] = false;
+    internal._currentAttackId[id] = null;
+    internal._attackHitToken[id] = null;
+    internal._attackSeq[id] = 0;
+  }
+
+  internal._accumulator = 0;
+  recordHistorySnapshot(internal);
 }
 
 export function rewindTo(_sim: Sim, _tick: number): void {

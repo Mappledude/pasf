@@ -1,15 +1,18 @@
 import Phaser from "phaser";
-import { createArenaSync, type ArenaStateSnapshot, type ArenaSync } from "../net/arenaSync";
+import {
+  createArenaSync,
+  type ArenaLastEvent,
+  type ArenaPhase,
+  type ArenaPlayerFrame,
+  type ArenaStateSnapshot,
+  type ArenaSync,
+} from "../net/arenaSync";
 import { Player } from "../entities/Player";
 import { RemoteOpponent } from "../entities/RemoteOpponent";
 
 const WORLD_WIDTH = 960;
 const WORLD_HEIGHT = 540;
 const GROUND_HEIGHT = 40;
-const DAMAGE_PER_HIT = 10;
-const DAMAGE_DEBOUNCE_MS = 120;
-const RESPAWN_DELAY_MS = 1500;
-
 export interface ArenaSceneConfig {
   arenaId: string;
   me: { id: string; codename: string };
@@ -28,14 +31,16 @@ export default class ArenaScene extends Phaser.Scene {
   private oppHudText?: Phaser.GameObjects.Text;
   private koText?: Phaser.GameObjects.Text;
   private koTween?: Phaser.Tweens.Tween;
-  private respawnTimer?: Phaser.Time.TimerEvent;
 
   private sync?: ArenaSync;
   private unsubscribe?: () => void;
   private opponentId?: string;
-  private lastHitAt = 0;
   private controlsLocked = false;
   private latestOpponentName = "";
+  private currentPhase: ArenaPhase = "lobby";
+  private lastKoTick?: number;
+  private meFrame?: ArenaPlayerFrame;
+  private opponentFrame?: ArenaPlayerFrame;
 
   constructor() {
     super("Arena");
@@ -103,33 +108,25 @@ export default class ArenaScene extends Phaser.Scene {
   }
 
   private handleAttackOverlap = () => {
-    if (!this.player || !this.opponentId || !this.opponent) return;
+    if (!this.player) return;
     if (!this.player.isAttackActive()) return;
-    if (!this.player.registerHit()) return;
-
-    const now = this.time.now;
-    if (now - this.lastHitAt < DAMAGE_DEBOUNCE_MS) {
-      return;
-    }
-    this.lastHitAt = now;
-
-    this.sync?.applyDamage(this.opponentId, DAMAGE_PER_HIT).catch((err) => {
-      console.warn("[ArenaScene] failed to apply damage", err);
-    });
+    this.player.registerHit();
   };
 
   private handleArenaState = (state?: ArenaStateSnapshot) => {
+    this.applyPhaseUpdate(state?.phase, state?.lastEvent);
+
     const players = state?.players ?? {};
     const meState = players?.[this.me.id];
+    this.meFrame = meState ?? undefined;
 
     if (meState && this.player) {
-      const hp = typeof meState.hp === "number" ? meState.hp : this.player.hp;
-      const prevHp = this.player.hp;
-      this.player.setHp(hp);
-      if (prevHp > 0 && hp <= 0) {
-        this.onLocalKo();
+      if (typeof meState.hp === "number") {
+        this.player.setHp(meState.hp);
       }
-      this.updateHud();
+      if (meState.pos && this.currentPhase !== "play") {
+        this.player.setPosition(meState.pos.x, meState.pos.y);
+      }
     }
 
     const otherIds = Object.keys(players ?? {}).filter((id) => id !== this.me.id);
@@ -138,55 +135,51 @@ export default class ArenaScene extends Phaser.Scene {
 
     if (!targetOpponentId) {
       this.opponentId = undefined;
+      this.opponentFrame = undefined;
       this.opponent?.setActive(false);
       this.latestOpponentName = "";
       this.updateHud();
       return;
     }
 
+    this.opponentId = targetOpponentId;
     const opponentState = players?.[targetOpponentId];
-    if (!opponentState) return;
-
-    if (this.opponentId !== targetOpponentId) {
-      this.opponentId = targetOpponentId;
-      this.opponent?.setCodename(opponentState.codename ?? "Agent");
-      this.lastHitAt = 0;
+    if (!opponentState) {
+      this.opponentFrame = undefined;
+      this.updateHud();
+      return;
     }
 
-    const oppHp = typeof opponentState.hp === "number" ? opponentState.hp : this.opponent?.hp ?? 100;
-    const prevOppHp = this.opponent?.hp ?? oppHp;
+    this.opponentFrame = opponentState;
+    const codename = opponentState.codename ?? this.latestOpponentName || "Agent";
+    this.latestOpponentName = codename;
+    this.opponent?.setCodename(codename);
+
+    const pos = opponentState.pos ?? this.spawn;
     this.opponent?.setState({
-      x: opponentState.x ?? this.spawn.x,
-      y: opponentState.y ?? this.spawn.y,
-      facing: opponentState.facing === "L" ? "L" : "R",
-      hp: oppHp,
+      x: pos.x,
+      y: pos.y,
+      facing: opponentState.dir === -1 ? "L" : "R",
+      hp: typeof opponentState.hp === "number" ? opponentState.hp : undefined,
     });
 
-    if (prevOppHp > 0 && oppHp <= 0) {
-      this.flashKo();
-    }
-
-    this.latestOpponentName = opponentState.codename ?? "Agent";
     this.updateHud();
   };
 
-  private onLocalKo() {
-    if (!this.player || this.controlsLocked) return;
-    this.controlsLocked = true;
-    this.player.setControlsEnabled(false);
-    this.flashKo();
+  private applyPhaseUpdate(phase?: ArenaPhase, lastEvent?: ArenaLastEvent) {
+    if (phase && phase !== this.currentPhase) {
+      this.currentPhase = phase;
+      const shouldLock = phase !== "play";
+      if (this.player) {
+        this.player.setControlsEnabled(!shouldLock);
+      }
+      this.controlsLocked = shouldLock;
+    }
 
-    this.respawnTimer?.remove(false);
-    this.respawnTimer = this.time.delayedCall(RESPAWN_DELAY_MS, () => {
-      if (!this.player) return;
-      this.sync?.respawn(this.spawn).catch((err) => console.warn("[ArenaScene] respawn failed", err));
-      this.player.setPosition(this.spawn.x, this.spawn.y);
-      this.player.setHp(100);
-      this.player.setControlsEnabled(true);
-      this.controlsLocked = false;
-      this.lastHitAt = 0;
-      this.updateHud();
-    });
+    if (lastEvent?.type === "ko" && lastEvent.tick !== this.lastKoTick) {
+      this.flashKo();
+      this.lastKoTick = lastEvent.tick;
+    }
   }
 
   private createGround() {
@@ -217,18 +210,41 @@ export default class ArenaScene extends Phaser.Scene {
 
   private updateHud() {
     if (!this.hudText) return;
-    const myHp = this.player ? Math.round(this.player.hp) : 0;
-    const opponentHp = this.opponent && this.opponent.sprite.visible ? Math.round(this.opponent.hp) : null;
-
-    this.hudText.setText(`You (${this.me.codename}) HP: ${myHp}`);
-    if (this.oppHudText) {
-      if (opponentHp === null) {
-        this.oppHudText.setText("Waiting for opponent...");
-      } else {
-        const name = this.latestOpponentName || "Opponent";
-        this.oppHudText.setText(`${name} HP: ${opponentHp}`);
-      }
+    const myHpSource =
+      typeof this.meFrame?.hp === "number"
+        ? this.meFrame.hp
+        : this.player
+        ? this.player.hp
+        : 0;
+    const myStocks = this.meFrame?.stocks;
+    let myText = `You (${this.me.codename}) HP: ${Math.round(myHpSource)}`;
+    if (typeof myStocks === "number") {
+      myText += ` · Stocks: ${myStocks}`;
     }
+    this.hudText.setText(myText);
+
+    if (!this.oppHudText) {
+      return;
+    }
+
+    if (!this.opponentId || !this.opponentFrame) {
+      this.oppHudText.setText("Waiting for opponent...");
+      return;
+    }
+
+    const oppHpSource =
+      typeof this.opponentFrame.hp === "number"
+        ? this.opponentFrame.hp
+        : this.opponent
+        ? this.opponent.hp
+        : 0;
+    const oppStocks = this.opponentFrame.stocks;
+    const name = this.latestOpponentName || this.opponentFrame.codename || "Opponent";
+    let oppText = `${name} HP: ${Math.round(oppHpSource)}`;
+    if (typeof oppStocks === "number") {
+      oppText += ` · Stocks: ${oppStocks}`;
+    }
+    this.oppHudText.setText(oppText);
   }
 
   private createKoText() {
@@ -261,8 +277,6 @@ export default class ArenaScene extends Phaser.Scene {
 
   private handleShutdown() {
     this.koTween?.stop();
-    this.respawnTimer?.remove(false);
-    this.respawnTimer = undefined;
     this.player?.destroy();
     this.player = undefined;
     this.opponent?.destroy();
