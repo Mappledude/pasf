@@ -2,8 +2,8 @@ import React, { FormEvent, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useArenas } from "../utils/useArenas";
-import { useArenaPresence } from "../utils/useArenaPresence";
-import { usePresenceRoster, formatRosterNames } from "../utils/usePresenceRoster";
+import { useArenaPresence, usePresenceRoster } from "../utils/useArenaPresence";
+
 import type { Arena } from "../types/models";
 
 interface ArenaListItemProps {
@@ -12,25 +12,32 @@ interface ArenaListItemProps {
 }
 
 const ArenaListItem = ({ arena, onJoin }: ArenaListItemProps) => {
-  const { players, loading: presenceLoading } = useArenaPresence(arena.id);
-  const roster = usePresenceRoster(players);
-  const rosterCount = roster.length;
-  const formattedRoster = useMemo(
-    () => formatRosterNames(roster.map((entry) => entry.name)),
-    [roster],
+// seatless roster (Lobby card)
+const { loading: presenceLoading } = useArenaPresence(arena.id);
+const { names: rosterNames, count: rosterCount } = usePresenceRoster(arena.id);
+
+// "Ben, Zane, Asha (+2)" style chip
+const formattedRoster = useMemo(() => {
+  const head = rosterNames.slice(0, 3).join(", ");
+  return rosterCount > 3 ? `${head} (+${rosterCount - 3})` : head;
+}, [rosterNames, rosterCount]);
+
+const occupancy = rosterCount;
+
+React.useEffect(() => {
+  if (presenceLoading) return;
+  console.log(
+    `[LOBBY] arena=${arena.id} liveCount=${rosterCount} names=${formattedRoster}`
   );
-  const occupancy = players.length;
-  React.useEffect(() => {
-    if (presenceLoading) return;
-    console.log(`[LOBBY] arena=${arena.id} n=${rosterCount} names=${formattedRoster}`);
-  }, [arena.id, formattedRoster, presenceLoading, rosterCount]);
+}, [arena.id, presenceLoading, rosterCount, formattedRoster]);
+
   const capacityLabel = useMemo(() => {
     if (presenceLoading) return null;
     if (arena.capacity) {
-      return `${occupancy}/${arena.capacity}`;
+      return `${rosterCount}/${arena.capacity}`;
     }
-    return `${occupancy} agents`;
-  }, [arena.capacity, occupancy, presenceLoading]);
+    return `${rosterCount} agents`;
+  }, [arena.capacity, presenceLoading, rosterCount]);
 
   return (
     <li>
@@ -38,6 +45,18 @@ const ArenaListItem = ({ arena, onJoin }: ArenaListItemProps) => {
         <strong>{arena.name}</strong>
         {arena.description ? <span className="muted">{arena.description}</span> : null}
       </div>
+      {presenceLoading ? (
+        <span className="skel" style={{ width: 160, height: 16, display: "block", marginTop: 8 }} />
+      ) : rosterNames.length ? (
+        <div className="chips" style={{ marginTop: 8 }}>
+          {rosterNames.map((name, index) => (
+            <span className="chip" key={`${name}-${index}`}>
+              {name}
+            </span>
+          ))}
+          {overflow > 0 ? <span className="chip muted">+{overflow}</span> : null}
+        </div>
+      ) : null}
       <div className="meta">
         {presenceLoading ? (
           <span className="skel" style={{ width: 80, height: 14 }} />

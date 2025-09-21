@@ -28,6 +28,7 @@ import {
   useArenaPresence,
   usePresenceDisplayNameResolver,
   primePresenceDisplayNameCache,
+  usePresenceRoster,
 } from "../utils/useArenaPresence";
 import { usePresenceRoster, formatRosterNames } from "../utils/usePresenceRoster";
 
@@ -57,13 +58,20 @@ export default function ArenaPage() {
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
 
 
-  const { players: presence, loading: presenceLoading, error: presenceError } =
-    useArenaPresence(arenaId);
-  const roster = usePresenceRoster(presence);
-  const formattedRosterNames = useMemo(
-    () => formatRosterNames(roster.map((entry) => entry.name)),
-    [roster],
-  );
+const {
+  players: presence,
+  loading: presenceLoading,
+  error: presenceError,
+} = useArenaPresence(arenaId);
+
+const { names: rosterNames, count: rosterCount } = usePresenceRoster(arenaId);
+
+// Optional: formatted chip string for UI
+const formattedRosterNames = useMemo(() => {
+  const head = rosterNames.slice(0, 3).join(", ");
+  return rosterCount > 3 ? `${head} (+${rosterCount - 3})` : head;
+}, [rosterNames, rosterCount]);
+
   const { user, player, authReady } = useAuth();
 
   const { arenaName, loading: arenaMetaLoading } = useArenaMeta(arenaId);
@@ -323,25 +331,6 @@ export default function ArenaPage() {
     return unsubscribe;
   }, []);
 
-  const agents = useMemo(() => Object.keys(state?.players ?? {}), [state]);
-
-  const chipNames = useMemo(() => {
-    if (presence.length) {
-      return presence.map((entry) => {
-        const displayName = typeof entry.displayName === "string" ? entry.displayName.trim() : "";
-        if (displayName.length > 0) {
-          return displayName;
-        }
-        const codename = typeof entry.codename === "string" ? entry.codename.trim() : "";
-        if (codename.length > 0) {
-          return codename;
-        }
-        return "Player";
-      });
-    }
-    return agents.map(() => "Player");
-  }, [agents, presence]);
-
   const meUid = user?.uid ?? null;
 
   const hostEntry = useMemo(() => {
@@ -380,9 +369,9 @@ export default function ArenaPage() {
 
   const debugFooter = useMemo(() => {
     const tick = state?.tick ?? 0;
-    const playersCount = chipNames.length;
+    const playersCount = rosterCount;
     return `tick=${tick} · agents=${playersCount} · host=${hostLabel} · ready=${stateReady}`;
-  }, [chipNames.length, hostLabel, state?.tick, stateReady]);
+  }, [hostLabel, rosterCount, state?.tick, stateReady]);
 
   return (
     <div className="grid" style={{ gap: 24 }}>
@@ -410,14 +399,18 @@ export default function ArenaPage() {
             <div style={{ marginTop: 8 }}>
               {presenceLoading ? (
                 <span className="skel" style={{ width: 140, height: 16 }} />
-              ) : chipNames.length ? (
-                <div className="chips">
-                  {chipNames.map((name) => (
-                    <span className="chip" key={name}>
-                      {name}
-                    </span>
-                  ))}
-                </div>
+              ) : rosterCount > 0 ? (
+                rosterNames.length ? (
+                  <div className="chips">
+                    {rosterNames.map((name) => (
+                      <span className="chip" key={name}>
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="muted">Agents connected.</span>
+                )
               ) : (
                 <span className="muted">No players connected.</span>
               )}
