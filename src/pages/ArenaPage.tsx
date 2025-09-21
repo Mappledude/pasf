@@ -31,6 +31,7 @@ import { useArenaSeats } from "../utils/useArenaSeats";
 import { useAuth } from "../context/AuthContext";
 import TouchControls from "../game/input/TouchControls";
 import { useArenaRuntime } from "../utils/useArenaRuntime";
+import { useArenaMeta } from "../utils/useArenaMeta";
 
 // Optional: keep a gated warn helper (don’t also import debugWarn)
 const debugWarn = (...args: unknown[]) => {
@@ -54,12 +55,28 @@ export default function ArenaPage() {
 
   const { players: presence, loading: presenceLoading, error: presenceError } = useArenaPresence(arenaId);
   const { seats, loading: seatsLoading, error: seatsError } = useArenaSeats(arenaId);
+  const { arenaName, loading: arenaMetaLoading } = useArenaMeta(arenaId);
   const { user, player, authReady } = useAuth();
   const resolvePresenceDisplayName = usePresenceDisplayNameResolver();
   const [seatBusy, setSeatBusy] = useState<number | null>(null);
   const [seatMessage, setSeatMessage] = useState<string | null>(null);
+  const titleLoggedRef = useRef(false);
+
+  const arenaTitle = arenaName ?? "Arena";
 
   type SeatEntry = (typeof seats)[number];
+
+  useEffect(() => {
+    titleLoggedRef.current = false;
+  }, [arenaId]);
+
+  useEffect(() => {
+    if (!arenaId) return;
+    if (arenaMetaLoading) return;
+    if (titleLoggedRef.current) return;
+    console.log(`[ARENA] title="${arenaTitle}" id=${arenaId}`);
+    titleLoggedRef.current = true;
+  }, [arenaId, arenaMetaLoading, arenaTitle]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -411,7 +428,7 @@ export default function ArenaPage() {
         <div className="card-header">
           <div className="meta-grid">
             <span className="muted mono">Arena</span>
-            <h2 style={{ margin: 0 }}>{arenaId || "Arena"}</h2>
+            <h2 style={{ margin: 0 }}>{arenaTitle}</h2>
           </div>
           <div className="button-row">
             <button type="button" className="button ghost" onClick={() => nav("/")}>

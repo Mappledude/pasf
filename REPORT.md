@@ -31,6 +31,8 @@ This report enumerates the gaps between the current lobby scaffold and the "From
   3. Update security rules to scope write access to a player's own ticket and seat documents.
 
 ## D. Arena Session Lifecycle and State Persistence
+- **Updates**
+  - Arena page title now subscribes to arena metadata via `useArenaMeta`, logging the resolved label and warning if the Firestore document is missing while falling back to the generic "Arena" title.
 - **Missing components / files**
   - `src/pages/ArenaPage.tsx` still renders debug state instead of the Phaser scene; there is no match lifecycle (warmup, rounds, post-match) coordinator.
   - `src/lib/arenaState.ts` stores minimal HP/tick info and lacks structures for rounds, timers, or authoritative refs.
