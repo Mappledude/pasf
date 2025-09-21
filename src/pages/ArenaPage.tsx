@@ -108,13 +108,15 @@ export default function ArenaPage() {
   useEffect(() => {
     if (!arenaId) return;
     if (presenceLoading) return;
-useEffect(() => {
-  if (presenceLoading) return;
-  debugLog(
-    `[ARENA] roster arena=${arenaId} n=${rosterCount} names=${formattedRosterNames}`,
-    { rosterNames }
-  );
-}, [arenaId, formattedRosterNames, presenceLoading, rosterCount, rosterNames]);
+  }, [arenaId, presenceLoading]);
+
+  useEffect(() => {
+    if (presenceLoading) return;
+    debugLog(
+      `[ARENA] roster arena=${arenaId} n=${rosterCount} names=${formattedRosterNames}`,
+      { rosterNames }
+    );
+  }, [arenaId, formattedRosterNames, presenceLoading, rosterCount, rosterNames]);
 
 
   useEffect(() => {
