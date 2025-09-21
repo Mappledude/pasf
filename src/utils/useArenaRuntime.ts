@@ -6,6 +6,7 @@ import { makeGame } from "../game/phaserGame";
 import ArenaScene, { type ArenaSceneConfig } from "../game/arena/ArenaScene";
 import { startHostLoop, type HostLoopController } from "../game/net/hostLoop";
 import { disposeActionBus } from "../net/ActionBus";
+import type { ArenaPresenceEntry } from "../types/models";
 
 const DEBUG = import.meta.env.DEV && import.meta.env.VITE_DEBUG_ARENA_PAGE === "true";
 
@@ -13,9 +14,9 @@ export interface UseArenaRuntimeOptions {
   arenaId?: string;
   authReady: boolean;
   stateReady: boolean;
-  isHost: boolean;
   meUid?: string | null;
   codename?: string | null;
+  presence: ArenaPresenceEntry[];
   canvasRef: React.RefObject<HTMLDivElement | null>;
   onBootError?: (message: string) => void;
 }
@@ -36,10 +37,12 @@ function destroyGame(game: Phaser.Game | null) {
 }
 
 export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntimeResult {
-  const { arenaId, authReady, stateReady, isHost, meUid, codename, canvasRef, onBootError } = options;
+  const { arenaId, authReady, stateReady, meUid, codename, presence, canvasRef, onBootError } = options;
 
   const gameRef = useRef<Phaser.Game | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const hostLoopRef = useRef<HostLoopController | null>(null);
+  const hostContextRef = useRef<string | null>(null);
   const [gameBooted, setGameBooted] = useState(false);
 
   const teardown = useCallback(() => {
@@ -58,15 +61,40 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       gameRef.current = null;
     }
 
+    if (hostLoopRef.current) {
+      hostLoopRef.current.stop();
+      hostLoopRef.current = null;
+    }
+    hostContextRef.current = null;
+
     disposeActionBus();
     setGameBooted(false);
   }, []);
 
   useEffect(() => teardown, [teardown]);
 
-  const shouldBoot = useMemo(() => {
-    return Boolean(arenaId && authReady && stateReady && meUid);
-  }, [arenaId, authReady, stateReady, meUid]);
+  const shouldBoot = useMemo(() => Boolean(arenaId && authReady && stateReady && meUid), [arenaId, authReady, stateReady, meUid]);
+
+  const hostEntry = useMemo(() => {
+    if (!presence.length) return null;
+    const parseTs = (value?: string) => {
+      if (!value) return Number.POSITIVE_INFINITY;
+      const parsed = Date.parse(value);
+      return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+    };
+    return [...presence].sort((a, b) => {
+      const aTs = parseTs(a.joinedAt);
+      const bTs = parseTs(b.joinedAt);
+      if (aTs !== bTs) return aTs - bTs;
+      const aKey = a.playerId ?? a.authUid ?? "";
+      const bKey = b.playerId ?? b.authUid ?? "";
+      return aKey.localeCompare(bKey);
+    })[0];
+  }, [presence]);
+
+  const hostAuthUid = hostEntry?.authUid ?? null;
+  const hostPlayerId = hostEntry?.playerId ?? null;
+  const isHost = Boolean(meUid && hostAuthUid && hostAuthUid === meUid);
 
   useEffect(() => {
     if (!shouldBoot) {
@@ -81,7 +109,6 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     }
 
     let cancelled = false;
-    const disposers: Array<() => void> = [];
 
     const boot = async () => {
       const playerId = meUid!;
@@ -89,27 +116,6 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       const spawn = { x: 240, y: 540 - 40 - 60 };
 
       try {
-        if (isHost) {
-          if (DEBUG) {
-            console.info("[ARENA] host bootstrap starting", { arenaId, playerId });
-          }
-          await initArenaPlayerState(arenaId!, { id: playerId, codename: playerCodename }, spawn);
-          if (cancelled) {
-            return;
-          }
-
-          const controller: HostLoopController = startHostLoop({
-            arenaId: arenaId!,
-            hostId: playerId,
-            log: DEBUG ? console : undefined,
-          });
-          disposers.push(() => controller.stop());
-        }
-
-        if (cancelled) {
-          return;
-        }
-
         const config: Phaser.Types.Core.GameConfig = {
           type: Phaser.AUTO,
           width: 960,
@@ -130,24 +136,12 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
           arenaId: arenaId!,
           me: { id: playerId, codename: playerCodename },
           spawn,
-          isHostClient: isHost,
         };
 
         game.scene.add("Arena", ArenaScene, true, sceneConfig);
         setGameBooted(true);
 
         cleanupRef.current = () => {
-          for (let i = disposers.length - 1; i >= 0; i -= 1) {
-            const dispose = disposers[i];
-            try {
-              dispose();
-            } catch (error) {
-              if (DEBUG) {
-                console.warn("[ARENA] runtime disposer failed", error);
-              }
-            }
-          }
-
           if (gameRef.current === game) {
             gameRef.current = null;
           }
@@ -170,7 +164,73 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       cancelled = true;
       teardown();
     };
-  }, [arenaId, canvasRef, codename, isHost, meUid, onBootError, shouldBoot, teardown]);
+  }, [arenaId, canvasRef, codename, meUid, onBootError, shouldBoot, teardown]);
+
+  useEffect(() => {
+    if (!shouldBoot || !arenaId || !meUid) {
+      if (hostLoopRef.current) {
+        hostLoopRef.current.stop();
+        hostLoopRef.current = null;
+      }
+      hostContextRef.current = null;
+      return;
+    }
+
+    if (!isHost) {
+      if (hostLoopRef.current) {
+        hostLoopRef.current.stop();
+        hostLoopRef.current = null;
+      }
+      hostContextRef.current = null;
+      return;
+    }
+
+    const hostKey = `${arenaId}:${hostPlayerId ?? meUid}`;
+    if (hostContextRef.current === hostKey && hostLoopRef.current) {
+      return;
+    }
+
+    hostContextRef.current = hostKey;
+    let cancelled = false;
+
+    const playerId = meUid;
+    const playerCodename = codename ?? playerId.slice(0, 6);
+    const spawn = { x: 240, y: 540 - 40 - 60 };
+
+    (async () => {
+      try {
+        if (DEBUG) {
+          console.info("[ARENA] host bootstrap starting", { arenaId, playerId });
+        }
+        await initArenaPlayerState(arenaId!, { id: playerId, codename: playerCodename }, spawn);
+        if (cancelled) {
+          return;
+        }
+
+        if (hostLoopRef.current) {
+          hostLoopRef.current.stop();
+        }
+        const controller = startHostLoop({
+          arenaId: arenaId!,
+          hostId: hostPlayerId ?? playerId,
+          log: DEBUG ? console : undefined,
+        });
+        hostLoopRef.current = controller;
+      } catch (error) {
+        if (DEBUG) {
+          console.error("[ARENA] host bootstrap failed", error);
+        }
+        if (!cancelled) {
+          onBootError?.("Failed to start local host session.");
+          teardown();
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [arenaId, codename, hostPlayerId, isHost, meUid, onBootError, shouldBoot, teardown]);
 
   return { gameBooted };
 }
