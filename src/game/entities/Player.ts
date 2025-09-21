@@ -217,6 +217,23 @@ export class Player extends Phaser.Events.EventEmitter {
     this.updateRigVisual();
   }
 
+  setFacing(direction: "L" | "R") {
+    const next = direction === "L" ? -1 : 1;
+    if (this.facing === next) {
+      return;
+    }
+    this.facing = next;
+    const attackBody = this.attackHitbox.body as Phaser.Physics.Arcade.Body;
+    const hitboxX = this.sprite.x + this.facing * ATTACK_OFFSET;
+    attackBody.reset(hitboxX, this.sprite.y);
+    this.attackHitbox.setPosition(hitboxX, this.sprite.y);
+    this.updateRigVisual();
+  }
+
+  playAnim(anim: string) {
+    this.updateRigVisual({ isAttacking: anim === "attack" });
+  }
+
   private startAttack() {
     this.attackTimer = ATTACK_DURATION;
     this.attackCooldown = ATTACK_COOLDOWN;

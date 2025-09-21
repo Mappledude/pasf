@@ -102,6 +102,10 @@ export default class ArenaScene extends Phaser.Scene {
 
     // Authoritative snapshot stream → push into interpolation buffer
     this.channel.onSnapshot((snap) => {
+      if (!snap) {
+        this.snapbuf.clear();
+        return;
+      }
       this.snapbuf.push(snap, this.time.now);
       // KO flash when my hp crosses >0 → <=0 (visual only; respawn is authoritative)
       const meNode = snap.players?.[this.me.id];
@@ -140,12 +144,17 @@ export default class ArenaScene extends Phaser.Scene {
     // Me (local fighter visuals mirror authoritative state)
     const meState = players[this.me.id];
     if (meState && this.player) {
-      const x = meState.x ?? this.spawn.x;
-      const y = meState.y ?? this.spawn.y;
+      const pos = meState.pos;
+      const x = typeof pos?.x === "number" ? pos.x : this.spawn.x;
+      const y = typeof pos?.y === "number" ? pos.y : this.spawn.y;
       this.player.setPosition(x, y);
-      this.player.setFacing(meState.facing === "L" ? "L" : "R");
+      this.player.setFacing(meState.dir === -1 ? "L" : "R");
       if (typeof meState.hp === "number") this.player.setHp(meState.hp);
-      if (meState.anim) this.player.playAnim(meState.anim);
+      if (typeof meState.attackActiveUntil === "number" && meState.attackActiveUntil > this.time.now) {
+        this.player.playAnim("attack");
+      } else {
+        this.player.playAnim("idle");
+      }
     }
 
     // Pick first other player as opponent (temporary until seats UI wires in)
@@ -163,13 +172,13 @@ export default class ArenaScene extends Phaser.Scene {
     this.opponent?.setActive(true);
     this.opponent?.setCodename(opp.codename ?? "Agent");
     this.opponent?.setState({
-      x: opp.x ?? this.spawn.x,
-      y: opp.y ?? this.spawn.y,
-      facing: opp.facing === "L" ? "L" : "R",
+      x: typeof opp.pos?.x === "number" ? opp.pos.x : this.spawn.x,
+      y: typeof opp.pos?.y === "number" ? opp.pos.y : this.spawn.y,
+      facing: opp.dir === -1 ? "L" : "R",
       hp: typeof opp.hp === "number" ? opp.hp : (this.opponent?.hp ?? 100),
-      anim: opp.anim,
-      vx: opp.vx,
-      vy: opp.vy,
+      anim: typeof opp.attackActiveUntil === "number" && opp.attackActiveUntil > this.time.now ? "attack" : undefined,
+      vx: opp.vel?.x,
+      vy: opp.vel?.y,
     });
 
     if (this.opponent && typeof opp.hp === "number" && this.opponent.hp > 0 && opp.hp <= 0) {

@@ -1,7 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import Phaser from "phaser";
 import { useParams, useNavigate } from "react-router-dom";
-import Phaser from "phaser";
 import {
   db,
   ensureAnonAuth,
@@ -9,7 +7,6 @@ import {
   leaveArena,
   claimArenaSeat,
   releaseArenaSeat,
-  initArenaPlayerState,
 } from "../firebase";
 import {
   ensureArenaState,
@@ -20,9 +17,19 @@ import {
 import { useArenaPresence } from "../utils/useArenaPresence";
 import { useArenaSeats } from "../utils/useArenaSeats";
 import { useAuth } from "../context/AuthContext";
-import { makeGame } from "../game/phaserGame";
-import ArenaScene, { type ArenaSceneConfig } from "../game/arena/ArenaScene";
+import { useArenaRuntime } from "../utils/useArenaRuntime";
 
+const DEBUG = import.meta.env.DEV && import.meta.env.VITE_DEBUG_ARENA_PAGE === "true";
+const debugLog = (...args: Parameters<typeof console.info>) => {
+  if (DEBUG) {
+    console.info(...args);
+  }
+};
+const debugWarn = (...args: Parameters<typeof console.warn>) => {
+  if (DEBUG) {
+    console.warn(...args);
+  }
+};
 
 export default function ArenaPage() {
   const { arenaId = "" } = useParams();
@@ -31,8 +38,6 @@ export default function ArenaPage() {
   const [err, setErr] = useState<string | null>(null);
   const [state, setState] = useState<ArenaState | undefined>(undefined);
   const canvasRef = useRef<HTMLDivElement | null>(null);
-  const gameRef = useRef<Phaser.Game | null>(null);
-const [gameBooted, setGameBooted] = useState(false);
 
   const { players: presence, loading: presenceLoading, error: presenceError } = useArenaPresence(arenaId);
   const { seats, loading: seatsLoading, error: seatsError } = useArenaSeats(arenaId);
@@ -46,7 +51,7 @@ const [gameBooted, setGameBooted] = useState(false);
   useEffect(() => {
     if (!arenaId) return;
     if (!authReady) {
-      console.info("[ARENA] arena state init skipped: auth not ready", { arenaId });
+      debugLog("[ARENA] arena state init skipped: auth not ready", { arenaId });
       return;
     }
     let unsub: (() => void) | undefined;
@@ -54,7 +59,7 @@ const [gameBooted, setGameBooted] = useState(false);
 
     (async () => {
       try {
-        console.info("[ARENA] arena state init starting", { arenaId });
+        debugLog("[ARENA] arena state init starting", { arenaId });
         await ensureArenaState(db, arenaId); // Create doc if missing
         if (cancelled) return;
         unsub = await watchArenaState(
@@ -69,7 +74,7 @@ const [gameBooted, setGameBooted] = useState(false);
             setErr("Live state failed to load.");
           }
         );
-        console.info("[ARENA] arena state subscription active", { arenaId });
+        debugLog("[ARENA] arena state subscription active", { arenaId });
       } catch (e) {
         if (cancelled) return;
         console.error("[ARENA] arena init error", e);
@@ -90,20 +95,20 @@ const [gameBooted, setGameBooted] = useState(false);
   useEffect(() => {
     if (!arenaId) return;
     if (!authReady) {
-      console.info("[ARENA] touchPlayer skipped: auth not ready", { arenaId });
+      debugLog("[ARENA] touchPlayer skipped: auth not ready", { arenaId });
       return;
     }
     let cancelled = false;
     (async () => {
       try {
-        console.info("[ARENA] touchPlayer start", { arenaId, uid: user?.uid });
+        debugLog("[ARENA] touchPlayer start", { arenaId, uid: user?.uid });
         await touchPlayer(db, arenaId);
         if (!cancelled) {
-          console.info("[ARENA] touchPlayer complete", { arenaId, uid: user?.uid });
+          debugLog("[ARENA] touchPlayer complete", { arenaId, uid: user?.uid });
         }
       } catch (e) {
         if (cancelled) return;
-        console.warn("[ARENA] touchPlayer failed", e);
+        debugWarn("[ARENA] touchPlayer failed", e);
       }
     })();
     return () => {
@@ -114,11 +119,11 @@ const [gameBooted, setGameBooted] = useState(false);
   useEffect(() => {
     if (!arenaId) return;
     if (!authReady) {
-      console.info("[PRESENCE] join skipped: auth not ready", { arenaId });
+      debugLog("[PRESENCE] join skipped: auth not ready", { arenaId });
       return;
     }
     if (!user?.uid) {
-      console.info("[PRESENCE] join skipped: missing uid", { arenaId });
+      debugLog("[PRESENCE] join skipped: missing uid", { arenaId });
       return;
     }
 
@@ -128,24 +133,24 @@ const [gameBooted, setGameBooted] = useState(false);
     let cancelled = false;
     let heartbeat: ReturnType<typeof setInterval> | null = null;
 
-    console.info("[PRESENCE] join effect starting", { arenaId, uid, codename });
+    debugLog("[PRESENCE] join effect starting", { arenaId, uid, codename });
 
     (async () => {
       try {
-        console.info("[PRESENCE] ensureAnonAuth", { arenaId, uid });
+        debugLog("[PRESENCE] ensureAnonAuth", { arenaId, uid });
         await ensureAnonAuth();
         if (cancelled) return;
 
-        console.info("[PRESENCE] joinArena", { arenaId, uid, codename });
+        debugLog("[PRESENCE] joinArena", { arenaId, uid, codename });
         await joinArena(arenaId, uid, codename, profileId);
         if (cancelled) return;
 
-        console.info("[PRESENCE] join complete", { arenaId, uid });
+        debugLog("[PRESENCE] join complete", { arenaId, uid });
 
         heartbeat = setInterval(() => {
-          console.info("[PRESENCE] heartbeat", { arenaId, uid });
+          debugLog("[PRESENCE] heartbeat", { arenaId, uid });
           joinArena(arenaId, uid, codename, profileId).catch((e) => {
-            console.warn("[PRESENCE] heartbeat failed", e);
+            debugWarn("[PRESENCE] heartbeat failed", e);
           });
         }, 60000);
       } catch (e) {
@@ -159,9 +164,9 @@ const [gameBooted, setGameBooted] = useState(false);
       if (heartbeat) {
         clearInterval(heartbeat);
       }
-      console.info("[PRESENCE] leaveArena", { arenaId, uid });
+      debugLog("[PRESENCE] leaveArena", { arenaId, uid });
       leaveArena(arenaId, uid).catch((e) => {
-        console.warn("[PRESENCE] leave failed", e);
+        debugWarn("[PRESENCE] leave failed", e);
       });
     };
   }, [arenaId, authReady, player?.codename, player?.id, user?.uid]);
@@ -215,6 +220,17 @@ const [gameBooted, setGameBooted] = useState(false);
     ? `${resolveSeatName(remoteSeat)}${isSeatMine(remoteSeat) ? " (you)" : ""}`
     : "open";
 
+  const { gameBooted } = useArenaRuntime({
+    arenaId,
+    authReady,
+    stateReady,
+    isHost,
+    meUid,
+    codename: player?.codename ?? null,
+    canvasRef,
+    onBootError: (message) => setSeatMessage((prev) => prev ?? message),
+  });
+
   const debugFooter = useMemo(() => {
     const tick = state?.tick ?? 0;
     const playersCount = chipNames.length;
@@ -250,121 +266,13 @@ const [gameBooted, setGameBooted] = useState(false);
   };
 
   useEffect(() => {
-    if (!isHost || !arenaId || !meUid || !canvasRef.current) {
-      if (gameRef.current) {
-        console.info("[ARENA] tearing down Phaser host", { arenaId });
-        gameRef.current.destroy(true);
-        gameRef.current = null;
-      }
-      return;
-    }
-
-    const codename = player?.codename ?? meUid.slice(0, 6);
-    const spawn = { x: 240, y: 360 };
-    const canvasEl = canvasRef.current;
-    if (!canvasEl) return;
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        await initArenaPlayerState(arenaId, { id: meUid, codename }, spawn);
-        if (cancelled) return;
-        const config: Phaser.Types.Core.GameConfig = {
-          type: Phaser.AUTO,
-          width: 960,
-          height: 540,
-          parent: canvasEl,
-          backgroundColor: "#0f1115",
-          physics: { default: "arcade", arcade: { gravity: { x: 0, y: 900 }, debug: false } },
-          scene: [],
-        };
-        const game = makeGame(config);
-        game.scene.add(
-          "Arena",
-          ArenaScene,
-          true,
-          {
-            arenaId,
-            me: { id: meUid, codename },
-            spawn,
-          },
-        );
-        gameRef.current = game;
-      } catch (err) {
-        if (cancelled) return;
-        console.error("[ARENA] failed to boot Phaser host", err);
-        setSeatMessage((prev) => prev ?? "Failed to start local host session.");
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (gameRef.current) {
-        console.info("[ARENA] destroying Phaser host", { arenaId });
-        gameRef.current.destroy(true);
-        gameRef.current = null;
-      }
-    };
-  }, [arenaId, isHost, meUid, player?.codename]);
-
-  useEffect(() => {
     if (!arenaId || !meUid) return;
     const identity = { uid: meUid, playerId: meProfileId };
     return () => {
-      releaseArenaSeat(arenaId, 0, identity).catch((err) => console.warn("[ARENA] release seat0 failed", err));
-      releaseArenaSeat(arenaId, 1, identity).catch((err) => console.warn("[ARENA] release seat1 failed", err));
+      releaseArenaSeat(arenaId, 0, identity).catch((err) => debugWarn("[ARENA] release seat0 failed", err));
+      releaseArenaSeat(arenaId, 1, identity).catch((err) => debugWarn("[ARENA] release seat1 failed", err));
     };
   }, [arenaId, meProfileId, meUid]);
-
-  useEffect(() => {
-    if (!arenaId) return;
-    if (!authReady || !stateReady) return;
-    if (!canvasRef.current) return;
-    if (!user?.uid) return;
-    if (gameRef.current) return;
-
-    const codename = player?.codename ?? user.uid.slice(0, 6);
-    const sceneConfig: ArenaSceneConfig = {
-      arenaId,
-      me: { id: user.uid, codename },
-      spawn: { x: 240, y: 540 - 40 - 60 },
-    };
-
-    const config: Phaser.Types.Core.GameConfig = {
-      type: Phaser.AUTO,
-      width: 960,
-      height: 540,
-      parent: canvasRef.current,
-      backgroundColor: "#0f1115",
-      physics: {
-        default: "arcade",
-        arcade: {
-          gravity: { x: 0, y: 900 },
-          debug: false,
-        },
-      },
-      scene: [],
-    };
-
-    console.info("[ARENA] booting Phaser ArenaScene", {
-      arenaId,
-      uid: user.uid,
-      codename,
-    });
-
-    const game = makeGame(config);
-    gameRef.current = game;
-    game.scene.add("Arena", ArenaScene, true, sceneConfig);
-    setGameBooted(true);
-
-    return () => {
-      console.info("[ARENA] tearing down Phaser ArenaScene", { arenaId });
-      setGameBooted(false);
-      gameRef.current?.destroy(true);
-      gameRef.current = null;
-    };
-  }, [arenaId, authReady, stateReady, user?.uid, player?.codename]);
 
   return (
     <div className="grid" style={{ gap: 24 }}>
@@ -488,15 +396,14 @@ const [gameBooted, setGameBooted] = useState(false);
             placeItems: "center",
           }}
         >
-{!gameBooted && (
-  <div
-    className="muted"
-    style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)", textAlign: "center" }}
-  >
-    Arena scene boots once auth and /state/current are ready.
-  </div>
-)}
-
+          {!gameBooted && (
+            <div
+              className="muted"
+              style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)", textAlign: "center" }}
+            >
+              Arena scene boots once auth and /state/current are ready.
+            </div>
+          )}
         </div>
         <div className="card-footer">[NET] {debugFooter}</div>
       </section>
