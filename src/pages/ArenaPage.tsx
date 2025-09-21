@@ -28,8 +28,9 @@ import {
   useArenaPresence,
   usePresenceDisplayNameResolver,
   primePresenceDisplayNameCache,
-  usePresenceRoster,
 } from "../utils/useArenaPresence";
+import { usePresenceRoster } from "../utils/useArenaPresence";
+
 
 import { useAuth } from "../context/AuthContext";
 import TouchControls from "../game/input/TouchControls";
@@ -57,19 +58,24 @@ export default function ArenaPage() {
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
 
 
-const {
-  players: presence,
-  loading: presenceLoading,
-  error: presenceError,
-} = useArenaPresence(arenaId);
+  const {
+    players: presence,
+    loading: presenceLoading,
+    error: presenceError,
+  } = useArenaPresence(arenaId);
 
-const { names: rosterNames, count: rosterCount } = usePresenceRoster(arenaId);
+  const rosterEntries = usePresenceRoster(presence);
+  const rosterNames = useMemo(
+    () => rosterEntries.map((entry) => entry.name),
+    [rosterEntries],
+  );
+  const rosterCount = rosterEntries.length;
 
-// Optional: formatted chip string for UI
-const formattedRosterNames = useMemo(() => {
-  const head = rosterNames.slice(0, 3).join(", ");
-  return rosterCount > 3 ? `${head} (+${rosterCount - 3})` : head;
-}, [rosterNames, rosterCount]);
+  // Optional: formatted chip string for UI
+  const formattedRosterNames = useMemo(() => {
+    const head = rosterNames.slice(0, 3).join(", ");
+    return rosterCount > 3 ? `${head} (+${rosterCount - 3})` : head;
+  }, [rosterNames, rosterCount]);
 
   const { user, player, authReady } = useAuth();
 
@@ -102,10 +108,14 @@ const formattedRosterNames = useMemo(() => {
   useEffect(() => {
     if (!arenaId) return;
     if (presenceLoading) return;
-    console.log(
-      `[ARENA] roster arena=${arenaId} n=${presence.length} names=${formattedRosterNames}`,
-    );
-  }, [arenaId, formattedRosterNames, presence.length, presenceLoading]);
+useEffect(() => {
+  if (presenceLoading) return;
+  debugLog(
+    `[ARENA] roster arena=${arenaId} n=${rosterCount} names=${formattedRosterNames}`,
+    { rosterNames }
+  );
+}, [arenaId, formattedRosterNames, presenceLoading, rosterCount, rosterNames]);
+
 
   useEffect(() => {
     if (typeof window === "undefined") {
