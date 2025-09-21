@@ -133,6 +133,18 @@ This report enumerates the gaps between the current lobby scaffold and the "From
   - Presence entries now store `displayName` and `arenaId`, and the client resolves and primes cached friendly names from the authenticated profile or the `players/{playerId}` document before joining.
   - UI chips consume the resolved `displayName` (or codename) only, ensuring presence renders readable names without UID fallbacks.
 
+### Manual verification
+1. Launch the client and navigate to any arena (e.g., `/arena/dev`).
+2. Ensure an authenticated profile has a `displayName` and join the arena; observe the Agents panel rendering that name immediately.
+3. From a second session without a profile `displayName`, join the same arena; the chip should fall back to `Player XX` (last two UID characters).
+4. Inspect the Firestore `arenas/{arenaId}/presence/{uid}` document and confirm `displayName` matches the chip for both sessions.
+
+### Telemetry snippets
+```
+[PRESENCE] join name="Agent Zero" uid=profile_123 playerId=profile_123
+[PRESENCE] join name="Player 7C" uid=anon_user_7c playerId=anon_user_7c
+```
+
 ---
 
 This gap analysis should be revisited after each milestone PR lands so the shared checklist stays accurate.
