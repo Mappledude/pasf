@@ -1,51 +1,40 @@
 rules_version = '2';
 service cloud.firestore {
-  match /databases/{db}/documents {
+  match /databases/{database}/documents {
+
     function isSignedIn() {
       return request.auth != null;
     }
 
+    // DEV: permissive but explicit (tighten later)
     match /arenas/{arenaId} {
       allow read: if isSignedIn();
-      allow write: if false;
+      allow write: if isSignedIn();
 
+      // Presence subcollection (existing)
       match /presence/{playerId} {
-        allow read: if isSignedIn();
-        allow create, update, delete: if request.auth != null && request.auth.uid == playerId;
-      }
-
-      match /players/{playerId} {
-        allow read: if isSignedIn();
-        allow create, update: if request.auth != null && request.auth.uid == playerId;
-        allow delete: if false;
-      }
-
-      match /actions/{actionId} {
-        allow read: if isSignedIn();
-        allow create: if request.auth != null
-          && request.auth.uid == request.resource.data.playerId
-          && request.resource.data.arenaId == arenaId;
-        allow update, delete: if false;
-      }
-
-      match /state {
-        allow read: if isSignedIn();
-        allow write: if isSignedIn();
+        allow read, write: if isSignedIn();
       }
     }
 
+    // IMPORTANT: single state doc at /arenas/{arenaId}/state
+    match /arenas/{arenaId}/state {
+      allow read, write: if isSignedIn();
+    }
+
+    // Players (existing)
     match /players/{playerId} {
-      allow read: if isSignedIn();
-      allow write: if false;
+      allow read, write: if isSignedIn();
     }
 
-    match /passcodes/{doc} {
-      allow read: if isSignedIn();
-      allow write: if false;
+    // Passcodes (existing)
+    match /passcodes/{passcode} {
+      allow read, write: if isSignedIn();
     }
 
-    match /leaderboard/{doc} {
-      allow read: if isSignedIn();
+    // Meta (existing)
+    match /meta/{doc} {
+      allow read: if true;
       allow write: if false;
     }
   }
