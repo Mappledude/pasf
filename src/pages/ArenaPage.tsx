@@ -1,6 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import Phaser from "phaser";
 import { useParams, useNavigate } from "react-router-dom";
-import { db, ensureAnonAuth, joinArena, leaveArena } from "../firebase";
+import Phaser from "phaser";
+import {
+  db,
+  ensureAnonAuth,
+  joinArena,
+  leaveArena,
+  claimArenaSeat,
+  releaseArenaSeat,
+  initArenaPlayerState,
+} from "../firebase";
 import {
   ensureArenaState,
   watchArenaState,
@@ -8,7 +18,11 @@ import {
   type ArenaState,
 } from "../lib/arenaState";
 import { useArenaPresence } from "../utils/useArenaPresence";
+import { useArenaSeats } from "../utils/useArenaSeats";
 import { useAuth } from "../context/AuthContext";
+import { makeGame } from "../game/phaserGame";
+import ArenaScene, { type ArenaSceneConfig } from "../game/arena/ArenaScene";
+
 
 export default function ArenaPage() {
   const { arenaId = "" } = useParams();
@@ -17,8 +31,16 @@ export default function ArenaPage() {
   const [err, setErr] = useState<string | null>(null);
   const [state, setState] = useState<ArenaState | undefined>(undefined);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const gameRef = useRef<Phaser.Game | null>(null);
+const [gameBooted, setGameBooted] = useState(false);
+
   const { players: presence, loading: presenceLoading, error: presenceError } = useArenaPresence(arenaId);
-  const { user, player, loading: authLoading, authReady } = useAuth();
+  const { seats, loading: seatsLoading, error: seatsError } = useArenaSeats(arenaId);
+  const { user, player, authReady } = useAuth();
+  const [seatBusy, setSeatBusy] = useState<number | null>(null);
+  const [seatMessage, setSeatMessage] = useState<string | null>(null);
+
+  type SeatEntry = (typeof seats)[number];
 
   // Auto-init + subscribe
   useEffect(() => {
@@ -153,11 +175,196 @@ export default function ArenaPage() {
     return agents;
   }, [agents, presence]);
 
+  const seatMap = useMemo(() => {
+    const map = new Map<number, SeatEntry>();
+    seats.forEach((seat) => {
+      map.set(seat.seatNo, seat);
+    });
+    return map;
+  }, [seats]);
+
+  const meUid = user?.uid ?? null;
+  const meProfileId = player?.id ?? null;
+
+  const isSeatMine = (seat?: SeatEntry) => {
+    if (!seat || !meUid) return false;
+    if (seat.uid === meUid) return true;
+    if (meProfileId && seat.playerId === meProfileId) return true;
+    if (!seat.playerId && seat.uid === meUid) return true;
+    return false;
+  };
+
+  const resolveSeatName = (seat?: SeatEntry) => {
+    if (!seat) return "Empty";
+    const match = presence.find((entry) => {
+      if (seat.playerId && entry.profileId && entry.profileId === seat.playerId) {
+        return true;
+      }
+      return entry.playerId === seat.uid || entry.authUid === seat.uid;
+    });
+    const base = match?.codename ?? seat.playerId ?? seat.uid;
+    return base || "Agent";
+  };
+
+  const hostSeat = seatMap.get(0);
+  const remoteSeat = seatMap.get(1);
+  const isHost = !!hostSeat && isSeatMine(hostSeat);
+
+  const hostLabel = hostSeat ? `${resolveSeatName(hostSeat)}${isSeatMine(hostSeat) ? " (you)" : ""}` : "open";
+  const remoteLabel = remoteSeat
+    ? `${resolveSeatName(remoteSeat)}${isSeatMine(remoteSeat) ? " (you)" : ""}`
+    : "open";
+
   const debugFooter = useMemo(() => {
     const tick = state?.tick ?? 0;
     const playersCount = chipNames.length;
-    return `tick=${tick} · agents=${playersCount} · ready=${stateReady}`;
-  }, [chipNames.length, state?.tick, stateReady]);
+    return `tick=${tick} · agents=${playersCount} · host=${hostLabel} · p2=${remoteLabel} · ready=${stateReady}`;
+  }, [chipNames.length, hostLabel, remoteLabel, state?.tick, stateReady]);
+
+  const handleJoinSeat = async (seatNo: number) => {
+    if (!arenaId || !meUid) return;
+    setSeatBusy(seatNo);
+    setSeatMessage(null);
+    try {
+      await claimArenaSeat(arenaId, seatNo, { uid: meUid, playerId: meProfileId });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Failed to join seat.";
+      setSeatMessage(message);
+    } finally {
+      setSeatBusy(null);
+    }
+  };
+
+  const handleLeaveSeat = async (seatNo: number) => {
+    if (!arenaId || !meUid) return;
+    setSeatBusy(seatNo);
+    setSeatMessage(null);
+    try {
+      await releaseArenaSeat(arenaId, seatNo, { uid: meUid, playerId: meProfileId });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Failed to leave seat.";
+      setSeatMessage(message);
+    } finally {
+      setSeatBusy(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!isHost || !arenaId || !meUid || !canvasRef.current) {
+      if (gameRef.current) {
+        console.info("[ARENA] tearing down Phaser host", { arenaId });
+        gameRef.current.destroy(true);
+        gameRef.current = null;
+      }
+      return;
+    }
+
+    const codename = player?.codename ?? meUid.slice(0, 6);
+    const spawn = { x: 240, y: 360 };
+    const canvasEl = canvasRef.current;
+    if (!canvasEl) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        await initArenaPlayerState(arenaId, { id: meUid, codename }, spawn);
+        if (cancelled) return;
+        const config: Phaser.Types.Core.GameConfig = {
+          type: Phaser.AUTO,
+          width: 960,
+          height: 540,
+          parent: canvasEl,
+          backgroundColor: "#0f1115",
+          physics: { default: "arcade", arcade: { gravity: { x: 0, y: 900 }, debug: false } },
+          scene: [],
+        };
+        const game = makeGame(config);
+        game.scene.add(
+          "Arena",
+          ArenaScene,
+          true,
+          {
+            arenaId,
+            me: { id: meUid, codename },
+            spawn,
+          },
+        );
+        gameRef.current = game;
+      } catch (err) {
+        if (cancelled) return;
+        console.error("[ARENA] failed to boot Phaser host", err);
+        setSeatMessage((prev) => prev ?? "Failed to start local host session.");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (gameRef.current) {
+        console.info("[ARENA] destroying Phaser host", { arenaId });
+        gameRef.current.destroy(true);
+        gameRef.current = null;
+      }
+    };
+  }, [arenaId, isHost, meUid, player?.codename]);
+
+  useEffect(() => {
+    if (!arenaId || !meUid) return;
+    const identity = { uid: meUid, playerId: meProfileId };
+    return () => {
+      releaseArenaSeat(arenaId, 0, identity).catch((err) => console.warn("[ARENA] release seat0 failed", err));
+      releaseArenaSeat(arenaId, 1, identity).catch((err) => console.warn("[ARENA] release seat1 failed", err));
+    };
+  }, [arenaId, meProfileId, meUid]);
+
+  useEffect(() => {
+    if (!arenaId) return;
+    if (!authReady || !stateReady) return;
+    if (!canvasRef.current) return;
+    if (!user?.uid) return;
+    if (gameRef.current) return;
+
+    const codename = player?.codename ?? user.uid.slice(0, 6);
+    const sceneConfig: ArenaSceneConfig = {
+      arenaId,
+      me: { id: user.uid, codename },
+      spawn: { x: 240, y: 540 - 40 - 60 },
+    };
+
+    const config: Phaser.Types.Core.GameConfig = {
+      type: Phaser.AUTO,
+      width: 960,
+      height: 540,
+      parent: canvasRef.current,
+      backgroundColor: "#0f1115",
+      physics: {
+        default: "arcade",
+        arcade: {
+          gravity: { x: 0, y: 900 },
+          debug: false,
+        },
+      },
+      scene: [],
+    };
+
+    console.info("[ARENA] booting Phaser ArenaScene", {
+      arenaId,
+      uid: user.uid,
+      codename,
+    });
+
+    const game = makeGame(config);
+    gameRef.current = game;
+    game.scene.add("Arena", ArenaScene, true, sceneConfig);
+    setGameBooted(true);
+
+    return () => {
+      console.info("[ARENA] tearing down Phaser ArenaScene", { arenaId });
+      setGameBooted(false);
+      gameRef.current?.destroy(true);
+      gameRef.current = null;
+    };
+  }, [arenaId, authReady, stateReady, user?.uid, player?.codename]);
 
   return (
     <div className="grid" style={{ gap: 24 }}>
@@ -217,6 +424,60 @@ export default function ArenaPage() {
       </section>
 
       <section className="card card-canvas">
+        <div className="grid" style={{ gap: 12, marginBottom: 12 }}>
+          {[0, 1].map((seatNo) => {
+            const seat = seatMap.get(seatNo);
+            const mine = isSeatMine(seat);
+            const label = seatNo === 0 ? "Player 1 (Host)" : "Player 2";
+            const occupied = !!seat;
+            const name = resolveSeatName(seat);
+            const disabled = seatBusy !== null || !meUid || (occupied && !mine) || seatsLoading;
+            return (
+              <div key={seatNo} className="card" style={{ margin: 0, padding: 12 }}>
+                <div className="muted mono" style={{ marginBottom: 4 }}>{label}</div>
+                <div style={{ fontFamily: "var(--font-mono)", marginBottom: 12 }}>
+                  {occupied ? (
+                    <>
+                      {name}
+                      {mine ? " (you)" : ""}
+                    </>
+                  ) : (
+                    <span className="muted">Open seat</span>
+                  )}
+                </div>
+                <div className="button-row">
+                  {mine ? (
+                    <button
+                      type="button"
+                      className="button ghost"
+                      onClick={() => handleLeaveSeat(seatNo)}
+                      disabled={seatBusy === seatNo}
+                    >
+                      {seatBusy === seatNo ? "Leaving…" : "Leave seat"}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="button"
+                      onClick={() => handleJoinSeat(seatNo)}
+                      disabled={disabled}
+                    >
+                      {seatBusy === seatNo ? "Joining…" : `Join P${seatNo + 1}`}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {seatMessage ? (
+          <div className="error" style={{ marginBottom: 12 }}>{seatMessage}</div>
+        ) : null}
+        {seatsError ? (
+          <div className="error" style={{ marginBottom: 12 }}>
+            Failed to load seat assignments.
+          </div>
+        ) : null}
         <div
           ref={canvasRef}
           className="canvas-frame"
@@ -227,9 +488,15 @@ export default function ArenaPage() {
             placeItems: "center",
           }}
         >
-          <div className="muted" style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)" }}>
-            Phaser canvas bootstraps here.
-          </div>
+{!gameBooted && (
+  <div
+    className="muted"
+    style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)", textAlign: "center" }}
+  >
+    Arena scene boots once auth and /state/current are ready.
+  </div>
+)}
+
         </div>
         <div className="card-footer">[NET] {debugFooter}</div>
       </section>
