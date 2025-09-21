@@ -21,7 +21,7 @@ const PRESENCE_DESPAWN_BUFFER_MS = 20_000;
 
 export interface ArenaSceneConfig {
   arenaId: string;
-  me: { id: string; codename: string };
+  me: { id: string; codename: string; authUid?: string };
   spawn: { x: number; y: number };
   /**
    * Optional hint from the caller: if true, this client is expected to be the host.
@@ -60,6 +60,7 @@ interface RemoteActorState {
 export default class ArenaScene extends Phaser.Scene {
   private arenaId!: string;
   private me!: { id: string; codename: string };
+  private meAuthUid!: string;
   private spawn!: { x: number; y: number };
 
   private player?: Player;
@@ -89,6 +90,7 @@ export default class ArenaScene extends Phaser.Scene {
   init(data: ArenaSceneConfig) {
     this.arenaId = data.arenaId;
     this.me = data.me;
+    this.meAuthUid = data.me.authUid ?? data.me.id;
     this.spawn = data.spawn;
     this.localAttackSeq = 0;
   }
@@ -170,7 +172,12 @@ export default class ArenaScene extends Phaser.Scene {
     const nextSnap = frame.next?.snapshot ?? previousSnap;
     if (!nextSnap) return;
 
-    const writerUid = nextSnap.writerUid ?? previousSnap?.writerUid ?? null;
+    const writerUid =
+      nextSnap.lastWriter ??
+      nextSnap.writerUid ??
+      previousSnap?.lastWriter ??
+      previousSnap?.writerUid ??
+      null;
     const snapshotTimeMs =
       typeof nextSnap.tMs === "number"
         ? nextSnap.tMs
@@ -392,7 +399,7 @@ export default class ArenaScene extends Phaser.Scene {
     }
 
     if (typeof state.x === "number" && typeof state.y === "number") {
-      if (!writerUid || writerUid === this.me.id) {
+      if (!writerUid || writerUid === this.meAuthUid) {
         player.setPosition(state.x, state.y);
         if (typeof state.vx === "number" || typeof state.vy === "number") {
           const vx = typeof state.vx === "number" ? state.vx : player.body.velocity.x;

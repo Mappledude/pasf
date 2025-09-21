@@ -8,9 +8,16 @@ import { initActionBus, disposeActionBus } from "../net/ActionBus";
 import { createKeyBinder } from "../game/input/KeyBinder";
 import type { ArenaPresenceEntry } from "../types/models";
 import { writeArenaWriter } from "../firebase";
-import { isPresenceEntryActive } from "./presenceThresholds";
 
 const DEBUG = import.meta.env.DEV && import.meta.env.VITE_DEBUG_ARENA_PAGE === "true";
+const ONLINE_WINDOW_MS = 20_000;
+
+interface ActivePresenceInfo {
+  presenceId: string;
+  authUid: string;
+  lastSeenMs: number;
+  entry: ArenaPresenceEntry;
+}
 
 export interface UseArenaRuntimeOptions {
   arenaId?: string;
@@ -64,66 +71,64 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
 
   const activePresence = useMemo(() => {
     const now = Date.now();
-    return presence.filter((entry) => {
-      const uid = entry.authUid ?? entry.playerId;
-      if (!uid) return false;
-      return isPresenceEntryActive(entry, now);
-    });
+    const map = new Map<string, ActivePresenceInfo>();
+    for (const entry of presence) {
+      const presenceId = entry.presenceId ?? entry.playerId;
+      const authUid = entry.authUid ?? entry.playerId;
+      if (!presenceId || !authUid) {
+        continue;
+      }
+      const lastSeenMs = entry.lastSeen ? Date.parse(entry.lastSeen) : Number.NaN;
+      if (!Number.isFinite(lastSeenMs)) {
+        continue;
+      }
+      if (now - lastSeenMs > ONLINE_WINDOW_MS) {
+        continue;
+      }
+      map.set(presenceId, {
+        presenceId,
+        authUid,
+        lastSeenMs,
+        entry,
+      });
+    }
+    return map;
   }, [presence]);
 
-  const stateWriterEntry = useMemo(() => {
-    if (!stateWriterUid) return null;
-    return (
-      presence.find((entry) => {
-        const uid = entry.authUid ?? entry.playerId;
-        return uid === stateWriterUid;
-      }) ?? null
-    );
-  }, [presence, stateWriterUid]);
-
-  const stateWriterActive = useMemo(() => {
-    if (!stateWriterEntry) return false;
-    return isPresenceEntryActive(stateWriterEntry);
-  }, [stateWriterEntry]);
-
-  const electedWriterUid = useMemo(() => {
-    const byUid = new Map(
-      activePresence
-        .map((entry) => [entry.authUid ?? entry.playerId ?? "", entry] as const)
-        .filter((pair): pair is readonly [string, ArenaPresenceEntry] => pair[0].length > 0),
-    );
-    if (stateWriterUid && stateWriterActive) {
-      return stateWriterUid;
-    }
-    if (byUid.size > 0) {
-      const sorted = [...byUid.values()].sort((a, b) => {
-        const parseTs = (value?: string) => {
-          if (!value) return Number.POSITIVE_INFINITY;
-          const parsed = Date.parse(value);
-          return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
-        };
-        const aTs = parseTs(a.joinedAt);
-        const bTs = parseTs(b.joinedAt);
-        if (aTs !== bTs) return aTs - bTs;
-        const aKey = (a.authUid ?? a.playerId ?? "").toString();
-        const bKey = (b.authUid ?? b.playerId ?? "").toString();
-        return aKey.localeCompare(bKey);
-      });
-      const first = sorted[0];
-      if (first) {
-        return first.authUid ?? first.playerId ?? null;
+  const activeByAuthUid = useMemo(() => {
+    const map = new Map<string, ActivePresenceInfo>();
+    for (const info of activePresence.values()) {
+      if (!map.has(info.authUid)) {
+        map.set(info.authUid, info);
       }
     }
-    return stateWriterUid ?? null;
-  }, [activePresence, stateWriterActive, stateWriterUid]);
+    return map;
+  }, [activePresence]);
 
-  const writerEntry = useMemo(() => {
-    if (!electedWriterUid) return null;
-    return presence.find((entry) => {
-      const uid = entry.authUid ?? entry.playerId;
-      return uid === electedWriterUid;
-    }) ?? null;
-  }, [electedWriterUid, presence]);
+  const stateWriterInfo = useMemo(() => {
+    if (!stateWriterUid) return null;
+    return activeByAuthUid.get(stateWriterUid) ?? null;
+  }, [activeByAuthUid, stateWriterUid]);
+
+  const electedWriterInfo = useMemo(() => {
+    if (stateWriterInfo) {
+      return stateWriterInfo;
+    }
+    const sorted = [...activePresence.values()].sort((a, b) => a.authUid.localeCompare(b.authUid));
+    return sorted[0] ?? null;
+  }, [activePresence, stateWriterInfo]);
+
+  const writerEntry = electedWriterInfo?.entry ?? null;
+
+  const electedWriterUid = electedWriterInfo?.authUid ?? null;
+  const electedWriterPresenceId = electedWriterInfo?.presenceId ?? null;
+
+  const myPresenceEntry = useMemo(() => {
+    if (!meUid) return null;
+    return presence.find((entry) => entry.authUid === meUid) ?? null;
+  }, [meUid, presence]);
+
+  const myPresenceId = myPresenceEntry?.presenceId ?? null;
 
   useEffect(() => {
     if (!arenaId) return;
@@ -133,7 +138,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     }
     writerLogRef.current = logKey;
     if (DEBUG) {
-      console.info(`[WRITER] elected uid=${logKey}`);
+      console.info(`[WRITER] elected ${logKey}`);
     }
   }, [arenaId, electedWriterUid]);
 
@@ -201,7 +206,10 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
 
   useEffect(() => teardown, [teardown]);
 
-  const shouldBoot = useMemo(() => Boolean(arenaId && authReady && stateReady && meUid), [arenaId, authReady, stateReady, meUid]);
+  const shouldBoot = useMemo(
+    () => Boolean(arenaId && authReady && stateReady && meUid && myPresenceId),
+    [arenaId, authReady, myPresenceId, stateReady, meUid],
+  );
 
   useEffect(() => {
     if (!shouldBoot || !arenaId || !meUid) {
@@ -229,7 +237,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
   }, [arenaId, meUid, shouldBoot]);
 
   useEffect(() => {
-    if (!shouldBoot || !arenaId || !meUid) {
+    if (!shouldBoot || !arenaId || !meUid || !myPresenceId) {
       disposeActionBus();
       return;
     }
@@ -240,7 +248,12 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
 
     (async () => {
       try {
-        await initActionBus({ arenaId, playerId: meUid, codename: playerCodename });
+        await initActionBus({
+          arenaId,
+          playerId: myPresenceId,
+          authUid: meUid,
+          codename: playerCodename,
+        });
       } catch (error) {
         if (!cancelled && DEBUG) {
           console.warn("[ARENA] action bus init failed", error);
@@ -252,7 +265,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       cancelled = true;
       disposeActionBus();
     };
-  }, [arenaId, codename, meUid, shouldBoot]);
+  }, [arenaId, codename, meUid, myPresenceId, shouldBoot]);
 
   const writerUid = electedWriterUid;
   const isWriter = Boolean(meUid && writerUid && writerUid === meUid);
@@ -273,7 +286,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
   }, [arenaId, writerEntry, writerEntry?.authUid, writerEntry?.joinedAt, writerEntry?.lastSeen, writerEntry?.playerId]);
 
   useEffect(() => {
-    if (!shouldBoot) {
+    if (!shouldBoot || !myPresenceId) {
       teardown();
       return;
     }
@@ -287,7 +300,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     let cancelled = false;
 
     const boot = async () => {
-      const playerId = meUid!;
+      const playerId = myPresenceId!;
       const playerCodename = codename ?? playerId.slice(0, 6);
       const spawn = { x: 240, y: 540 - 40 - 60 };
 
@@ -310,7 +323,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
 
         const sceneConfig: ArenaSceneConfig = {
           arenaId: arenaId!,
-          me: { id: playerId, codename: playerCodename },
+          me: { id: playerId, codename: playerCodename, authUid: meUid! },
           spawn,
         };
 
@@ -340,7 +353,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       cancelled = true;
       teardown();
     };
-  }, [arenaId, canvasRef, codename, meUid, onBootError, shouldBoot, teardown]);
+  }, [arenaId, canvasRef, codename, meUid, myPresenceId, onBootError, shouldBoot, teardown]);
 
   useEffect(() => {
     if (!shouldBoot || !arenaId || !meUid) {
@@ -352,7 +365,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       return;
     }
 
-    if (!isWriter) {
+    if (!isWriter || !electedWriterPresenceId || !electedWriterUid) {
       if (hostLoopRef.current) {
         hostLoopRef.current.stop();
         hostLoopRef.current = null;
@@ -361,7 +374,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       return;
     }
 
-    const hostKey = `${arenaId}:${writerUid ?? meUid}`;
+    const hostKey = `${arenaId}:${electedWriterPresenceId}:${electedWriterUid}`;
     if (hostContextRef.current === hostKey && hostLoopRef.current) {
       return;
     }
@@ -379,7 +392,8 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
         }
         const controller = startHostLoop({
           arenaId: arenaId!,
-          writerUid: writerUid ?? meUid!,
+          writerAuthUid: electedWriterUid!,
+          writerPresenceId: electedWriterPresenceId!,
           log: DEBUG ? console : undefined,
         });
         hostLoopRef.current = controller;
@@ -397,7 +411,17 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     return () => {
       cancelled = true;
     };
-  }, [arenaId, isWriter, meUid, onBootError, shouldBoot, teardown, writerUid]);
+  }, [
+    arenaId,
+    electedWriterPresenceId,
+    electedWriterUid,
+    isWriter,
+    meUid,
+    myPresenceId,
+    onBootError,
+    shouldBoot,
+    teardown,
+  ]);
 
   return { gameBooted };
 }

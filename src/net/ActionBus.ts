@@ -22,12 +22,14 @@ interface NormalizedInput {
 interface InitOptions {
   arenaId: string;
   playerId: string;
+  authUid: string;
   codename?: string;
 }
 
 interface ActionBusState {
   arenaId: string;
   playerId: string;
+  authUid: string;
   codename?: string;
   ready: boolean;
   lastSendAt: number;
@@ -89,7 +91,12 @@ async function sendInput(state: ActionBusState, payload: NormalizedInput) {
   state.pendingPayload = undefined;
 
   try {
-    await writeArenaInput(state.arenaId, state.playerId, toWritePayload(payload, state.codename));
+    await writeArenaInput(
+      state.arenaId,
+      state.playerId,
+      toWritePayload(payload, state.codename),
+      state.authUid,
+    );
   } catch (error) {
     console.warn("[NET] input publish failed", error);
   }
@@ -129,6 +136,7 @@ export async function initActionBus(options: InitOptions): Promise<void> {
   const state: ActionBusState = {
     arenaId: options.arenaId,
     playerId: options.playerId,
+    authUid: options.authUid,
     codename: options.codename,
     ready: true,
     lastSendAt: 0,
@@ -139,7 +147,12 @@ export async function initActionBus(options: InitOptions): Promise<void> {
 
   try {
     // Seed doc so host loop can read a known key immediately
-    await writeArenaInput(options.arenaId, options.playerId, toWritePayload(defaultInput, options.codename));
+    await writeArenaInput(
+      options.arenaId,
+      options.playerId,
+      toWritePayload(defaultInput, options.codename),
+      options.authUid,
+    );
   } catch (error) {
     console.warn("[NET] initial input publish skipped", error);
   }

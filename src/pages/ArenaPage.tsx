@@ -354,15 +354,18 @@ export default function ArenaPage() {
   const meUid = user?.uid ?? null;
 
   const writerUid = state?.writerUid ?? null;
+  const lastWriterUid = state?.lastWriter ?? null;
 
-  const writerEntry = useMemo(() => {
-    if (!writerUid) return null;
-    return presence.find((entry) => (entry.authUid ?? entry.playerId) === writerUid) ?? null;
-  }, [presence, writerUid]);
+  const hostAuthUid = lastWriterUid ?? writerUid ?? null;
 
-  const hostLabel = writerEntry
-    ? `${writerEntry.codename ?? writerEntry.playerId.slice(0, 6)}${
-        writerEntry.authUid && writerEntry.authUid === meUid ? " (you)" : ""
+  const hostEntry = useMemo(() => {
+    if (!hostAuthUid) return null;
+    return presence.find((entry) => entry.authUid === hostAuthUid) ?? null;
+  }, [hostAuthUid, presence]);
+
+  const hostLabel = hostEntry
+    ? `${hostEntry.codename ?? hostEntry.playerId.slice(0, 6)}${
+        hostEntry.authUid && hostEntry.authUid === meUid ? " (you)" : ""
       }`
     : "—";
 

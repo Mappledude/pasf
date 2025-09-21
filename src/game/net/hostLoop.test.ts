@@ -40,20 +40,55 @@ describe("startHostLoop combat", () => {
   });
 
   it("applies damage when an attack lands", async () => {
-    const controller = startHostLoop({ arenaId: "arena-1", writerUid: "host", log: logger });
+    const controller = startHostLoop({
+      arenaId: "arena-1",
+      writerAuthUid: "p1",
+      writerPresenceId: "p1",
+      log: logger,
+    });
     try {
       expect(presenceCallback).toBeDefined();
       expect(inputsCallback).toBeDefined();
 
       const nowIso = new Date().toISOString();
       presenceCallback?.([
-        { playerId: "p1", authUid: "p1", codename: "Alpha", lastSeen: nowIso } as ArenaPresenceEntry,
-        { playerId: "p2", authUid: "p2", codename: "Beta", lastSeen: nowIso } as ArenaPresenceEntry,
+        {
+          presenceId: "p1",
+          playerId: "p1",
+          authUid: "p1",
+          codename: "Alpha",
+          lastSeen: nowIso,
+        } as ArenaPresenceEntry,
+        {
+          presenceId: "p2",
+          playerId: "p2",
+          authUid: "p2",
+          codename: "Beta",
+          lastSeen: nowIso,
+        } as ArenaPresenceEntry,
       ]);
 
       const commands: Record<string, ArenaInputSnapshot> = {
-        p1: { playerId: "p1", right: false, left: false, jump: false, attack: false, attackSeq: 0 },
-        p2: { playerId: "p2", right: false, left: false, jump: false, attack: false, attackSeq: 0 },
+        p1: {
+          playerId: "p1",
+          presenceId: "p1",
+          authUid: "p1",
+          right: false,
+          left: false,
+          jump: false,
+          attack: false,
+          attackSeq: 0,
+        },
+        p2: {
+          playerId: "p2",
+          presenceId: "p2",
+          authUid: "p2",
+          right: false,
+          left: false,
+          jump: false,
+          attack: false,
+          attackSeq: 0,
+        },
       };
 
       const pushInputs = () => {

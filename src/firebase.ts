@@ -186,6 +186,8 @@ export type ArenaPlayerState = {
 
 export interface ArenaInputSnapshot {
   playerId: string;
+  presenceId: string;
+  authUid?: string;
   codename?: string;
   left?: boolean;
   right?: boolean;
@@ -210,6 +212,8 @@ export interface ArenaEntityState {
 export interface ArenaStateWrite {
   tick: number;
   writerUid: string | null;
+  lastWriter: string | null;
+  ts: number;
   entities: Record<string, ArenaEntityState>;
 }
 
@@ -649,6 +653,7 @@ export const watchArenaPresence = (
           ? data.displayName.trim()
           : undefined;
       return {
+        presenceId: docSnap.id,
         playerId: data.playerId ?? docSnap.id,
         codename: data.codename ?? "Agent",
         displayName,
@@ -684,6 +689,8 @@ const serializeInputSnapshot = (snap: QueryDocumentSnapshot): ArenaInputSnapshot
   const data = snap.data() as Record<string, unknown>;
   return {
     playerId: (data.playerId as string) ?? snap.id,
+    presenceId: snap.id,
+    authUid: typeof data.authUid === "string" ? data.authUid : undefined,
     codename: (data.codename as string) ?? undefined,
     left: typeof data.left === "boolean" ? data.left : undefined,
     right: typeof data.right === "boolean" ? data.right : undefined,
@@ -759,13 +766,16 @@ export interface ArenaInputWrite {
 
 export async function writeArenaInput(
   arenaId: string,
-  playerId: string,
+  presenceId: string,
   input: ArenaInputWrite,
+  authUid: string,
 ): Promise<void> {
   await ensureAnonAuth();
-  const ref = arenaInputDoc(arenaId, playerId);
+  const ref = arenaInputDoc(arenaId, presenceId);
   const payload: Record<string, unknown> = {
-    playerId,
+    playerId: presenceId,
+    presenceId,
+    authUid,
     updatedAt: serverTimestamp(),
   };
   if (typeof input.left === "boolean") payload.left = input.left;
@@ -777,9 +787,9 @@ export async function writeArenaInput(
   await setDoc(ref, payload, { merge: true });
 }
 
-export async function deleteArenaInput(arenaId: string, playerId: string): Promise<void> {
+export async function deleteArenaInput(arenaId: string, presenceId: string): Promise<void> {
   await ensureAnonAuth();
-  const ref = arenaInputDoc(arenaId, playerId);
+  const ref = arenaInputDoc(arenaId, presenceId);
   await deleteDoc(ref);
 }
 
@@ -803,8 +813,8 @@ export async function writeArenaState(arenaId: string, state: ArenaStateWrite): 
   await ensureAnonAuth();
   const ref = arenaStateDoc(arenaId);
   const entities: Record<string, Record<string, unknown>> = {};
-  for (const [uid, data] of Object.entries(state.entities)) {
-    entities[uid] = {
+  for (const [presenceId, data] of Object.entries(state.entities)) {
+    entities[presenceId] = {
       ...data,
       updatedAt: serverTimestamp(),
     };
@@ -814,6 +824,8 @@ export async function writeArenaState(arenaId: string, state: ArenaStateWrite): 
     {
       tick: state.tick,
       writerUid: state.writerUid,
+      lastWriter: state.lastWriter,
+      ts: state.ts,
       entities,
       lastUpdate: serverTimestamp(),
     },
