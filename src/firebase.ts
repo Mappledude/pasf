@@ -442,7 +442,9 @@ export const joinArena = async (
 
   const existing = await getDoc(ref);
   if (!existing.exists()) {
-    console.info(`[PRESENCE] join name="${logName}" uid=${presenceId} playerId=${playerId}`);
+    console.info(
+      `[PRESENCE] join name="${logName}" uid=${presenceId} arena=${arenaId} playerId=${playerId}`,
+    );
     await setDoc(
       ref,
       {
@@ -456,7 +458,7 @@ export const joinArena = async (
   }
 
   console.info(
-    `[PRESENCE] rejoin (preserving joinedAt) name="${logName}" uid=${presenceId} playerId=${playerId}`,
+    `[PRESENCE] rejoin (preserving joinedAt) name="${logName}" uid=${presenceId} arena=${arenaId} playerId=${playerId}`,
   );
   await updateDoc(ref, {
     ...baseData,
@@ -496,7 +498,7 @@ export const heartbeatArenaPresence = async (
     const code = (error as { code?: string } | null)?.code;
     if (code === "not-found") {
       console.info(
-        `[PRESENCE] heartbeat recovery uid=${presenceId} (presence missing, re-joining with fresh joinedAt)`,
+        `[PRESENCE] heartbeat recovery uid=${presenceId} arena=${arenaId} (presence missing, re-joining with fresh joinedAt)`,
       );
       await setDoc(ref, { ...data, joinedAt: serverTimestamp() });
       return;

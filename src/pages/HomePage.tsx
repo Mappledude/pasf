@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useArenas } from "../utils/useArenas";
 import { useArenaPresence, usePresenceRoster } from "../utils/useArenaPresence";
+
 import type { Arena } from "../types/models";
 
 interface ArenaListItemProps {
@@ -11,13 +12,25 @@ interface ArenaListItemProps {
 }
 
 const ArenaListItem = ({ arena, onJoin }: ArenaListItemProps) => {
-  const { loading: presenceLoading } = useArenaPresence(arena.id);
-  const { names: rosterNames, count: rosterCount } = usePresenceRoster(arena.id);
-  const overflow = Math.max(0, rosterCount - rosterNames.length);
-  React.useEffect(() => {
-    if (presenceLoading) return;
-    console.log(`[LOBBY] arena=${arena.id} liveCount=${rosterCount}`);
-  }, [arena.id, presenceLoading, rosterCount]);
+// seatless roster (Lobby card)
+const { loading: presenceLoading } = useArenaPresence(arena.id);
+const { names: rosterNames, count: rosterCount } = usePresenceRoster(arena.id);
+
+// "Ben, Zane, Asha (+2)" style chip
+const formattedRoster = useMemo(() => {
+  const head = rosterNames.slice(0, 3).join(", ");
+  return rosterCount > 3 ? `${head} (+${rosterCount - 3})` : head;
+}, [rosterNames, rosterCount]);
+
+const occupancy = rosterCount;
+
+React.useEffect(() => {
+  if (presenceLoading) return;
+  console.log(
+    `[LOBBY] arena=${arena.id} liveCount=${rosterCount} names=${formattedRoster}`
+  );
+}, [arena.id, presenceLoading, rosterCount, formattedRoster]);
+
   const capacityLabel = useMemo(() => {
     if (presenceLoading) return null;
     if (arena.capacity) {
