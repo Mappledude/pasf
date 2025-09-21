@@ -5,6 +5,14 @@ import { useAuth } from "../context/AuthContext";
 import type { ArenaPresenceEntry } from "../types/models";
 
 const presenceDisplayNameCache = new Map<string, string>();
+const loggedPresenceDisplayNames = new Set<string>();
+
+const logResolvedDisplayName = (playerId: string, normalized: string) => {
+  if (loggedPresenceDisplayNames.has(playerId)) return;
+  const escaped = normalized.replace(/"/g, '\\"');
+  console.info(`[PRESENCE] join name="${escaped}" uid=${playerId}`);
+  loggedPresenceDisplayNames.add(playerId);
+};
 
 const normalizeDisplayName = (value?: string | null): string | undefined => {
   if (typeof value !== "string") return undefined;
@@ -51,6 +59,7 @@ export const primePresenceDisplayNameCache = (
   const normalized = normalizeDisplayName(value ?? undefined);
   if (!normalized) return;
   presenceDisplayNameCache.set(playerId, normalized);
+  logResolvedDisplayName(playerId, normalized);
 };
 
 export const usePresenceDisplayNameResolver = () => {
@@ -72,6 +81,7 @@ export const usePresenceDisplayNameResolver = () => {
         const normalized = normalizeDisplayName(player.displayName ?? null);
         if (normalized) {
           presenceDisplayNameCache.set(playerId, normalized);
+          logResolvedDisplayName(playerId, normalized);
           return normalized;
         }
       }
@@ -85,6 +95,7 @@ export const usePresenceDisplayNameResolver = () => {
         const normalized = normalizeDisplayName(raw ?? undefined);
         if (normalized) {
           presenceDisplayNameCache.set(playerId, normalized);
+          logResolvedDisplayName(playerId, normalized);
           return normalized;
         }
       } catch (err) {
