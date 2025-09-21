@@ -1,10 +1,9 @@
-
 {
   "hosting": {
-    "public": ".",
+    "public": "dist",
     "ignore": ["firebase.json","**/.*","**/node_modules/**"],
     "rewrites": [
-      { "source": "/arena/**", "destination": "/index.html" }
+      { "source": "**", "destination": "/index.html" }
     ]
   }
 }
