@@ -3,6 +3,7 @@ import { doc, getDoc, type FirestoreError, type Unsubscribe } from "firebase/fir
 import { ensureAnonAuth, watchArenaPresence, db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import type { ArenaPresenceEntry } from "../types/models";
+import { isPresenceEntryActive } from "./presenceThresholds";
 
 const presenceDisplayNameCache = new Map<string, string>();
 const loggedPresenceDisplayNames = new Set<string>();
@@ -53,12 +54,7 @@ const collectMissingPlayerIds = (entries: ArenaPresenceEntry[]): string[] => {
 
 const filterActiveEntries = (entries: ArenaPresenceEntry[]): ArenaPresenceEntry[] => {
   const now = Date.now();
-  return entries.filter((entry) => {
-    if (!entry.lastSeen) return true;
-    const parsed = Date.parse(entry.lastSeen);
-    if (!Number.isFinite(parsed)) return true;
-    return now - parsed <= 20_000;
-  });
+  return entries.filter((entry) => isPresenceEntryActive(entry, now));
 };
 
 export const primePresenceDisplayNameCache = (

@@ -8,6 +8,7 @@ import { initActionBus, disposeActionBus } from "../net/ActionBus";
 import { createKeyBinder } from "../game/input/KeyBinder";
 import type { ArenaPresenceEntry } from "../types/models";
 import { writeArenaWriter } from "../firebase";
+import { isPresenceEntryActive } from "./presenceThresholds";
 
 const DEBUG = import.meta.env.DEV && import.meta.env.VITE_DEBUG_ARENA_PAGE === "true";
 
@@ -38,8 +39,6 @@ function destroyGame(game: Phaser.Game | null) {
   }
 }
 
-const ACTIVE_PRESENCE_WINDOW_MS = 20_000;
-
 export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntimeResult {
   const {
     arenaId,
@@ -68,42 +67,55 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     return presence.filter((entry) => {
       const uid = entry.authUid ?? entry.playerId;
       if (!uid) return false;
-      const lastSeenMs = entry.lastSeen ? Date.parse(entry.lastSeen) : NaN;
-      if (!Number.isFinite(lastSeenMs)) {
-        return false;
-      }
-      return now - lastSeenMs <= ACTIVE_PRESENCE_WINDOW_MS;
+      return isPresenceEntryActive(entry, now);
     });
   }, [presence]);
 
+  const stateWriterEntry = useMemo(() => {
+    if (!stateWriterUid) return null;
+    return (
+      presence.find((entry) => {
+        const uid = entry.authUid ?? entry.playerId;
+        return uid === stateWriterUid;
+      }) ?? null
+    );
+  }, [presence, stateWriterUid]);
+
+  const stateWriterActive = useMemo(() => {
+    if (!stateWriterEntry) return false;
+    return isPresenceEntryActive(stateWriterEntry);
+  }, [stateWriterEntry]);
+
   const electedWriterUid = useMemo(() => {
-    if (!activePresence.length) {
-      return stateWriterUid ?? null;
-    }
     const byUid = new Map(
       activePresence
         .map((entry) => [entry.authUid ?? entry.playerId ?? "", entry] as const)
         .filter((pair): pair is readonly [string, ArenaPresenceEntry] => pair[0].length > 0),
     );
-    if (stateWriterUid && byUid.has(stateWriterUid)) {
+    if (stateWriterUid && stateWriterActive) {
       return stateWriterUid;
     }
-    const sorted = [...byUid.values()].sort((a, b) => {
-      const parseTs = (value?: string) => {
-        if (!value) return Number.POSITIVE_INFINITY;
-        const parsed = Date.parse(value);
-        return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
-      };
-      const aTs = parseTs(a.joinedAt);
-      const bTs = parseTs(b.joinedAt);
-      if (aTs !== bTs) return aTs - bTs;
-      const aKey = (a.authUid ?? a.playerId ?? "").toString();
-      const bKey = (b.authUid ?? b.playerId ?? "").toString();
-      return aKey.localeCompare(bKey);
-    });
-    const first = sorted[0];
-    return first ? first.authUid ?? first.playerId ?? null : null;
-  }, [activePresence, stateWriterUid]);
+    if (byUid.size > 0) {
+      const sorted = [...byUid.values()].sort((a, b) => {
+        const parseTs = (value?: string) => {
+          if (!value) return Number.POSITIVE_INFINITY;
+          const parsed = Date.parse(value);
+          return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+        };
+        const aTs = parseTs(a.joinedAt);
+        const bTs = parseTs(b.joinedAt);
+        if (aTs !== bTs) return aTs - bTs;
+        const aKey = (a.authUid ?? a.playerId ?? "").toString();
+        const bKey = (b.authUid ?? b.playerId ?? "").toString();
+        return aKey.localeCompare(bKey);
+      });
+      const first = sorted[0];
+      if (first) {
+        return first.authUid ?? first.playerId ?? null;
+      }
+    }
+    return stateWriterUid ?? null;
+  }, [activePresence, stateWriterActive, stateWriterUid]);
 
   const writerEntry = useMemo(() => {
     if (!electedWriterUid) return null;

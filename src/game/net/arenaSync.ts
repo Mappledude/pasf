@@ -55,7 +55,6 @@ export type ArenaStateSnapshot = {
   entities?: Record<string, ArenaEntityFrame | undefined>;
   players?: Record<string, ArenaPlayerFrame | undefined>;
   lastEvent?: ArenaLastEvent;
-  writerUid?: string;
 };
 
 export interface ArenaHostOptions {
