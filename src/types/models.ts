@@ -33,6 +33,9 @@ export interface ArenaSeatAssignment {
   playerId: string;
   uid: string;
   joinedAt?: string;
+  profileId?: string;
+  codename?: string | null;
+  displayName?: string | null;
 }
 
 export interface LeaderboardEntry {

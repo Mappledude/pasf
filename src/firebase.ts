@@ -152,6 +152,8 @@ export interface ArenaPresenceEntry {
   playerId: string;
   codename: string;
   joinedAt?: ISODate;
+  authUid?: string;
+  profileId?: string;
 }
 
 export interface ArenaSeatAssignment {
@@ -159,6 +161,9 @@ export interface ArenaSeatAssignment {
   playerId: string;
   uid: string;
   joinedAt?: ISODate;
+  profileId?: string;
+  codename?: string | null;
+  displayName?: string | null;
 }
 
 export type ArenaPlayerState = {
@@ -391,7 +396,7 @@ export const joinArena = async (
 ) => {
   const ref = doc(db, `arenas/${arenaId}/presence/${presenceId}`);
   const data: Record<string, unknown> = {
-    playerId: presenceId,
+    playerId: profileId ?? presenceId,
     authUid: presenceId,
     codename,
     joinedAt: serverTimestamp(),
@@ -412,14 +417,23 @@ const seatDoc = (arenaId: string, seatNo: number) =>
 const normalizeSeatPlayerId = (playerId: string | null | undefined, uid: string) =>
   playerId && playerId.trim().length > 0 ? playerId : uid;
 
+type SeatIdentity = {
+  playerId?: string | null;
+  profileId?: string | null;
+  uid: string;
+  codename?: string | null;
+  displayName?: string | null;
+};
+
 export const claimArenaSeat = async (
   arenaId: string,
   seatNo: number,
-  identity: { playerId?: string | null; uid: string },
+  identity: SeatIdentity,
 ) => {
   await ensureAnonAuth();
   const seatId = `${seatNo}`;
-  const playerId = normalizeSeatPlayerId(identity.playerId, identity.uid);
+  const seatProfileId = identity.profileId ?? identity.playerId;
+  const playerId = normalizeSeatPlayerId(seatProfileId, identity.uid);
   const seatRef = seatDoc(arenaId, seatNo);
   const seatsCollection = collection(db, `arenas/${arenaId}/seats`);
   const seatSnapshot = await getDocs(seatsCollection);
@@ -453,6 +467,9 @@ export const claimArenaSeat = async (
       {
         playerId,
         uid: identity.uid,
+        profileId: seatProfileId ?? null,
+        codename: identity.codename ?? null,
+        displayName: identity.displayName ?? null,
         joinedAt: serverTimestamp(),
       },
       { merge: true },
@@ -463,11 +480,12 @@ export const claimArenaSeat = async (
 export const releaseArenaSeat = async (
   arenaId: string,
   seatNo: number,
-  identity?: { playerId?: string | null; uid: string },
+  identity?: SeatIdentity,
 ) => {
   await ensureAnonAuth();
   const seatRef = seatDoc(arenaId, seatNo);
-  const playerId = identity ? normalizeSeatPlayerId(identity.playerId, identity.uid) : null;
+  const seatProfileId = identity?.profileId ?? identity?.playerId;
+  const playerId = identity ? normalizeSeatPlayerId(seatProfileId, identity.uid) : null;
 
   await runTransaction(db, async (tx) => {
     const snap = await tx.get(seatRef);
@@ -499,6 +517,9 @@ export const watchArenaSeats = (
           seatNo,
           playerId: data?.playerId ?? "",
           uid: data?.uid ?? "",
+          profileId: data?.profileId ?? undefined,
+          codename: data?.codename ?? undefined,
+          displayName: data?.displayName ?? undefined,
           joinedAt: data?.joinedAt?.toDate?.().toISOString?.(),
         } as ArenaSeatAssignment;
       })
