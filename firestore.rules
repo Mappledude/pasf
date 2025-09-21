@@ -11,6 +11,20 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if isSignedIn();
 
+      match /inputs/{uid} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn() && request.auth.uid == uid;
+      }
+
+      match /seats/{seatNo} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+        allow update: if isSignedIn()
+          && resource.data.uid == request.auth.uid
+          && request.resource.data.uid == request.auth.uid;
+        allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      }
+
       // Presence subcollection (existing)
       match /presence/{playerId} {
         allow read, write: if isSignedIn();
