@@ -31,6 +31,8 @@ This report enumerates the gaps between the current lobby scaffold and the "From
   3. Update security rules to scope write access to a player's own ticket and seat documents.
 
 ## D. Arena Session Lifecycle and State Persistence
+- **Updates**
+  - Arena page title now subscribes to arena metadata via `useArenaMeta`, logging the resolved label and warning if the Firestore document is missing while falling back to the generic "Arena" title.
 - **Missing components / files**
   - `src/pages/ArenaPage.tsx` still renders debug state instead of the Phaser scene; there is no match lifecycle (warmup, rounds, post-match) coordinator.
   - `src/lib/arenaState.ts` stores minimal HP/tick info and lacks structures for rounds, timers, or authoritative refs.
@@ -119,6 +121,14 @@ This report enumerates the gaps between the current lobby scaffold and the "From
   1. Keep the existing stick-figure rig (rectangle body + hitbox) as the guaranteed fallback and document it in the asset checklist so designers know the baseline survives missing art.
   2. Create TODO slots for each fighter animation state (idle, run, jump, punch, kick, hit, KO) with expected resolution, pivot, and naming (e.g., `fighter-idle.png`) so sprite sheets can drop in without Phaser code churn.
   3. Ship an asset manifest (JSON or TS module) under `src/game/arena/` that declares the sprite keys required by the loader so QA can quickly confirm when all art milestones are met.
+
+## Presence / Name Mapping
+- **Root cause**
+  - Presence documents did not persist a human-readable `displayName`, so the client fell back to truncated UIDs/profile IDs when rendering chips and seat labels.
+  - There was no shared resolver to hydrate player names, leading to duplicate lookups and inconsistent caching across hooks.
+- **Fix summary**
+  - Presence entries now store `displayName` and `arenaId`, and the client resolves and primes cached friendly names from the authenticated profile or the `players/{playerId}` document before joining.
+  - UI chips consume the resolved `displayName` (or codename) only, ensuring presence renders readable names without UID fallbacks.
 
 ---
 

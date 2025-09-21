@@ -135,6 +135,7 @@ export interface BossProfile {
 export interface PlayerProfile {
   id: string;
   codename: string;
+  displayName?: string | null;
   createdAt: ISODate;
   lastActiveAt?: ISODate;
 }
@@ -151,6 +152,7 @@ export interface Arena {
 export interface ArenaPresenceEntry {
   playerId: string;
   codename: string;
+  displayName?: string | null;
   joinedAt?: ISODate;
   authUid?: string;
   profileId?: string;
@@ -275,6 +277,11 @@ export const findPlayerByPasscode = async (
   return {
     id: pSnap.id,
     codename: d.codename,
+    displayName: typeof d.displayName === "string" && d.displayName.trim().length > 0
+      ? d.displayName
+      : typeof d.name === "string" && d.name.trim().length > 0
+        ? d.name
+        : null,
     createdAt: d.createdAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
     lastActiveAt: d.lastActiveAt?.toDate?.()?.toISOString?.(),
   } as PlayerProfile;
@@ -301,6 +308,13 @@ export const loginWithPasscode = async (passcode: string): Promise<PlayerProfile
 
   const { passcode: _ignoredPasscode, ...playerData } = playerSnap.data() ?? {};
   const profile = { id: playerSnap.id, ...playerData } as PlayerProfile;
+  const rawDisplayName =
+    (playerData as { displayName?: string; name?: string }).displayName ??
+    (playerData as { displayName?: string; name?: string }).name;
+  profile.displayName =
+    typeof rawDisplayName === "string" && rawDisplayName.trim().length > 0
+      ? rawDisplayName
+      : profile.displayName ?? null;
   console.info(`[AUTH] loginWithPasscode ok ${profile.id}`);
   return profile;
 };
@@ -312,6 +326,11 @@ export const listPlayers = async (): Promise<PlayerProfile[]> => {
     return {
       id: docSnap.id,
       codename: d.codename,
+      displayName: typeof d.displayName === "string" && d.displayName.trim().length > 0
+        ? d.displayName
+        : typeof d.name === "string" && d.name.trim().length > 0
+          ? d.name
+          : null,
       createdAt: d.createdAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
       lastActiveAt: d.lastActiveAt?.toDate?.()?.toISOString?.(),
     } as PlayerProfile;
@@ -393,17 +412,27 @@ export const joinArena = async (
   presenceId: string,
   codename: string,
   profileId?: string,
+  displayName?: string | null,
 ) => {
   const ref = doc(db, `arenas/${arenaId}/presence/${presenceId}`);
+  const trimmedDisplayName =
+    typeof displayName === "string" && displayName.trim().length > 0 ? displayName.trim() : null;
+  const playerId = profileId ?? presenceId;
   const data: Record<string, unknown> = {
-    playerId: profileId ?? presenceId,
+    playerId,
     authUid: presenceId,
+    arenaId,
     codename,
     joinedAt: serverTimestamp(),
   };
   if (profileId) {
     data.profileId = profileId;
   }
+  if (trimmedDisplayName) {
+    data.displayName = trimmedDisplayName;
+  }
+  const logName = (trimmedDisplayName ?? codename ?? "Player").replace(/"/g, '\\"');
+  console.info(`[PRESENCE] join name="${logName}" uid=${presenceId} playerId=${playerId}`);
   await setDoc(ref, data, { merge: true });
 };
 
@@ -540,9 +569,14 @@ export const watchArenaPresence = (
   return onSnapshot(presenceRef, (snapshot) => {
     const players = snapshot.docs.map((docSnap) => {
       const data = docSnap.data() as any;
+      const displayName =
+        typeof data.displayName === "string" && data.displayName.trim().length > 0
+          ? data.displayName.trim()
+          : undefined;
       return {
         playerId: data.playerId ?? docSnap.id,
         codename: data.codename ?? "Agent",
+        displayName,
         joinedAt: data.joinedAt?.toDate?.().toISOString?.(),
         authUid: data.authUid ?? docSnap.id,
         profileId: data.profileId,

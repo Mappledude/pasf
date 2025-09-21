@@ -1,3 +1,4 @@
+import { useArenaMeta } from "../utils/useArenaMeta";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 
@@ -18,11 +19,17 @@ import {
   touchPlayer,
 } from "../lib/arenaState";
 import type { ArenaState } from "../lib/arenaState";
+import {
+  useArenaPresence,
+  usePresenceDisplayNameResolver,
+  primePresenceDisplayNameCache,
+} from "../utils/useArenaPresence";
+// seatless: removed useArenaSeats import
 
-import { useArenaPresence } from "../utils/useArenaPresence";
 import { useAuth } from "../context/AuthContext";
 import TouchControls from "../game/input/TouchControls";
 import { useArenaRuntime } from "../utils/useArenaRuntime";
+import { useArenaMeta } from "../utils/useArenaMeta";
 
 // Optional: keep a gated warn helper (don’t also import debugWarn)
 const debugWarn = (...args: unknown[]) => {
@@ -46,11 +53,33 @@ export default function ArenaPage() {
 
 
   const { players: presence, loading: presenceLoading, error: presenceError } = useArenaPresence(arenaId);
-  const { user, player, authReady } = useAuth();
+const { user, player, authReady } = useAuth();
+
+const { arenaName, loading: arenaMetaLoading } = useArenaMeta(arenaId);
+const resolvePresenceDisplayName = usePresenceDisplayNameResolver();
+
+// keep a one-time logger ref if later code logs the title once
+const titleLoggedRef = useRef(false);
+
+// Human title for header; never show the doc id
+const arenaTitle = arenaName ?? "Arena";
+
 
   useEffect(() => {
     debugLog("[UI] seats/host hidden (seatless mode)");
   }, []);
+
+  useEffect(() => {
+    titleLoggedRef.current = false;
+  }, [arenaId]);
+
+  useEffect(() => {
+    if (!arenaId) return;
+    if (arenaMetaLoading) return;
+    if (titleLoggedRef.current) return;
+    console.log(`[ARENA] title="${arenaTitle}" id=${arenaId}`);
+    titleLoggedRef.current = true;
+  }, [arenaId, arenaMetaLoading, arenaTitle]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -179,8 +208,26 @@ export default function ArenaPage() {
     const profileId = player?.id;
     let cancelled = false;
     let heartbeat: ReturnType<typeof setInterval> | null = null;
-
     debugLog("[PRESENCE] join effect starting", { arenaId, uid, codename });
+
+    const computeDisplayName = async (): Promise<string | null> => {
+      if (profileId) {
+        const resolved = await resolvePresenceDisplayName(profileId);
+        const trimmed = resolved.trim();
+        const normalized = trimmed.length > 0 ? trimmed : null;
+        if (normalized) {
+          primePresenceDisplayNameCache(profileId, normalized);
+        }
+        return normalized;
+      }
+      const fallback = typeof player?.displayName === "string" ? player.displayName.trim() : "";
+      return fallback.length > 0 ? fallback : null;
+    };
+
+    const pushPresence = async () => {
+      const nextDisplayName = await computeDisplayName();
+      await joinArena(arenaId, uid, codename, profileId, nextDisplayName);
+    };
 
     (async () => {
       try {
@@ -188,15 +235,15 @@ export default function ArenaPage() {
         await ensureAnonAuth();
         if (cancelled) return;
 
-        debugLog("[PRESENCE] joinArena", { arenaId, uid, codename });
-        await joinArena(arenaId, uid, codename, profileId);
+        debugLog("[PRESENCE] joinArena", { arenaId, uid, codename, profileId });
+        await pushPresence();
         if (cancelled) return;
 
         debugLog("[PRESENCE] join complete", { arenaId, uid });
 
         heartbeat = setInterval(() => {
           debugLog("[PRESENCE] heartbeat", { arenaId, uid });
-          joinArena(arenaId, uid, codename, profileId).catch((e) => {
+          pushPresence().catch((e) => {
             debugWarn("[PRESENCE] heartbeat failed", e);
           });
         }, 60000);
@@ -216,7 +263,15 @@ export default function ArenaPage() {
         debugWarn("[PRESENCE] leave failed", e);
       });
     };
-  }, [arenaId, authReady, player?.codename, player?.id, user?.uid]);
+  }, [
+    arenaId,
+    authReady,
+    player?.codename,
+    player?.displayName,
+    player?.id,
+    resolvePresenceDisplayName,
+    user?.uid,
+  ]);
 
   useEffect(() => {
     setLeaderboardLoading(true);
@@ -239,19 +294,18 @@ export default function ArenaPage() {
   const chipNames = useMemo(() => {
     if (presence.length) {
       return presence.map((entry) => {
-        if (entry.codename && entry.codename.trim().length > 0) {
-          return entry.codename;
+        const displayName = typeof entry.displayName === "string" ? entry.displayName.trim() : "";
+        if (displayName.length > 0) {
+          return displayName;
         }
-        if (entry.profileId && entry.profileId.trim().length > 0) {
-          return entry.profileId;
+        const codename = typeof entry.codename === "string" ? entry.codename.trim() : "";
+        if (codename.length > 0) {
+          return codename;
         }
-        if (entry.authUid && entry.authUid.trim().length > 0) {
-          return entry.authUid.slice(0, 6);
-        }
-        return entry.playerId.slice(0, 6);
+        return "Player";
       });
     }
-    return agents;
+    return agents.map(() => "Player");
   }, [agents, presence]);
 
   const meUid = user?.uid ?? null;
@@ -302,7 +356,7 @@ export default function ArenaPage() {
         <div className="card-header">
           <div className="meta-grid">
             <span className="muted mono">Arena</span>
-            <h2 style={{ margin: 0 }}>{arenaId || "Arena"}</h2>
+            <h2 style={{ margin: 0 }}>{arenaTitle}</h2>
           </div>
           <div className="button-row">
             <button type="button" className="button ghost" onClick={() => nav("/")}>

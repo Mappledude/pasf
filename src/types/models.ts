@@ -7,6 +7,7 @@ export interface BossProfile {
 export interface PlayerProfile {
   id: string;
   codename: string;
+  displayName?: string | null;
   createdAt: string;
   lastActiveAt?: string;
 }
@@ -23,6 +24,7 @@ export interface Arena {
 export interface ArenaPresenceEntry {
   playerId: string;
   codename: string;
+  displayName?: string | null;
   joinedAt?: string;
   authUid?: string;
   profileId?: string;
