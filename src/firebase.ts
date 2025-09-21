@@ -18,6 +18,7 @@ import {
   deleteDoc,
   collection,
   serverTimestamp,
+  increment,
   query,
   orderBy,
   onSnapshot,
@@ -40,6 +41,8 @@ export const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+
+const FIREBASE_DEBUG = import.meta.env?.VITE_DEBUG_FIREBASE === "true" || import.meta.env?.DEV;
 
 let loggedProjectId = false;
 
@@ -204,6 +207,7 @@ export interface LeaderboardEntry {
   losses: number;
   streak: number;
   updatedAt: ISODate;
+  lastWinAt?: ISODate;
 }
 
 // === BOSS ===
@@ -749,50 +753,164 @@ export interface UpsertLeaderboardInput {
   wins?: number;
   losses?: number;
   streak?: number;
+  playerCodename?: string;
 }
 
 export const upsertLeaderboardEntry = async (input: UpsertLeaderboardInput) => {
+  await ensureAnonAuth();
   const ref = doc(db, "leaderboard", input.playerId);
-  const snap = await getDoc(ref);
   const now = serverTimestamp();
-  if (!snap.exists()) {
-    await setDoc(ref, {
-      playerId: input.playerId,
-      wins: input.wins ?? 0,
-      losses: input.losses ?? 0,
-      streak: input.streak ?? 0,
+
+  try {
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      const payload: Record<string, unknown> = {
+        playerId: input.playerId,
+        wins: input.wins ?? 0,
+        losses: input.losses ?? 0,
+        streak: input.streak ?? 0,
+        updatedAt: now,
+      };
+      if (input.playerCodename) {
+        payload.playerCodename = input.playerCodename;
+      }
+      await setDoc(ref, payload);
+      return;
+    }
+
+    const cur = snap.data() as any;
+    const payload: Record<string, unknown> = {
+      wins: input.wins ?? cur.wins ?? 0,
+      losses: input.losses ?? cur.losses ?? 0,
+      streak: input.streak ?? cur.streak ?? 0,
       updatedAt: now,
-    });
-    return;
+    };
+    if (input.playerCodename) {
+      payload.playerCodename = input.playerCodename;
+    }
+    await updateDoc(ref, payload);
+  } catch (error) {
+    if (FIREBASE_DEBUG) {
+      console.error("[firebase] upsertLeaderboardEntry failed", error);
+    }
+    throw error;
   }
-  const cur = snap.data() as any;
-  await updateDoc(ref, {
-    wins: input.wins ?? cur.wins ?? 0,
-    losses: input.losses ?? cur.losses ?? 0,
-    streak: input.streak ?? cur.streak ?? 0,
-    updatedAt: now,
-  });
 };
 
+const deserializeLeaderboardEntry = (snap: QueryDocumentSnapshot): LeaderboardEntry => {
+  const data = snap.data() as Record<string, unknown>;
+  return {
+    id: snap.id,
+    playerId: (data.playerId as string) ?? snap.id,
+    playerCodename: typeof data.playerCodename === "string" ? data.playerCodename : undefined,
+    wins: typeof data.wins === "number" ? data.wins : 0,
+    losses: typeof data.losses === "number" ? data.losses : 0,
+    streak: typeof data.streak === "number" ? data.streak : 0,
+    updatedAt: readTimestamp(data.updatedAt) ?? new Date().toISOString(),
+    lastWinAt: readTimestamp(data.lastWinAt),
+  };
+};
+
+export interface RecordLeaderboardWinInput {
+  playerId: string;
+  codename?: string;
+}
+
+export async function recordLeaderboardWin(input: RecordLeaderboardWinInput): Promise<void> {
+  await ensureAnonAuth();
+  const ref = doc(db, "leaderboard", input.playerId);
+  const payload: Record<string, unknown> = {
+    playerId: input.playerId,
+    wins: increment(1),
+    streak: increment(1),
+    lastWinAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  if (input.codename) {
+    payload.playerCodename = input.codename;
+  }
+  try {
+    await setDoc(ref, payload, { merge: true });
+  } catch (error) {
+    if (FIREBASE_DEBUG) {
+      console.error("[firebase] recordLeaderboardWin failed", error);
+    }
+    throw error;
+  }
+}
+
 export const listLeaderboard = async (): Promise<LeaderboardEntry[]> => {
-  const snapshot = await getDocs(collection(db, "leaderboard"));
+  await ensureAnonAuth();
+  const q = query(collection(db, "leaderboard"), orderBy("wins", "desc"), orderBy("lastWinAt", "desc"));
+  const snapshot = await getDocs(q);
+  const entries = snapshot.docs.map(deserializeLeaderboardEntry);
+
   return Promise.all(
-    snapshot.docs.map(async (s) => {
-      const d = s.data() as any;
-      let playerCodename: string | undefined;
+    entries.map(async (entry) => {
+      if (entry.playerCodename) {
+        return entry;
+      }
       try {
-        const p = await getDoc(doc(db, "players", d.playerId));
-        playerCodename = p.data()?.codename;
-      } catch {}
-      return {
-        id: s.id,
-        playerId: d.playerId,
-        playerCodename,
-        wins: d.wins ?? 0,
-        losses: d.losses ?? 0,
-        streak: d.streak ?? 0,
-        updatedAt: d.updatedAt?.toDate?.().toISOString?.() ?? new Date().toISOString(),
-      } as LeaderboardEntry;
+        const snap = await getDoc(doc(db, "players", entry.playerId));
+        const codename = snap.data()?.codename;
+        if (typeof codename === "string" && codename.trim().length > 0) {
+          return { ...entry, playerCodename: codename };
+        }
+      } catch (error) {
+        if (FIREBASE_DEBUG) {
+          console.error("[firebase] listLeaderboard lookup failed", error);
+        }
+      }
+      return entry;
     }),
   );
 };
+
+export function watchLeaderboard(
+  cb: (entries: LeaderboardEntry[]) => void,
+  onError?: (error: unknown) => void,
+): () => void {
+  let unsubscribe: Unsubscribe | null = null;
+  let cancelled = false;
+
+  ensureAnonAuth()
+    .then(() => {
+      if (cancelled) return;
+      const q = query(
+        collection(db, "leaderboard"),
+        orderBy("wins", "desc"),
+        orderBy("lastWinAt", "desc"),
+      );
+      unsubscribe = onSnapshot(
+        q,
+        (snapshot) => {
+          const entries = snapshot.docs.map(deserializeLeaderboardEntry);
+          cb(entries);
+        },
+        (error) => {
+          if (FIREBASE_DEBUG) {
+            console.error("[firebase] watchLeaderboard failed", error);
+          }
+          onError?.(error);
+        },
+      );
+      if (cancelled && unsubscribe) {
+        unsubscribe();
+        unsubscribe = null;
+      }
+    })
+    .catch((error) => {
+      if (FIREBASE_DEBUG) {
+        console.error("[firebase] watchLeaderboard auth failed", error);
+      }
+      onError?.(error);
+    });
+
+  return () => {
+    cancelled = true;
+    if (unsubscribe) {
+      unsubscribe();
+      unsubscribe = null;
+    }
+  };
+}
