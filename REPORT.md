@@ -106,6 +106,15 @@ This report enumerates the gaps between the current lobby scaffold and the "From
   3. Add CI scripts (GitHub Actions) that run lint/test plus `firebase emulators:exec` smoke tests and verify rules deploy cleanly before merging.
   4. Document ops runbook in `REPORT.md` appendix once the above systems are in place.
 
+## K. Fighter Art, Animation, and Asset Pipeline
+- **Missing components / files**
+  - Arena fighters still render as solid-color rectangles; there is no documented asset checklist covering the placeholder rig or incoming sprite sheets.
+  - No manifest enumerating required sprite sets (idle/run/jump/punch/kick/hit/KO) for each fighter, so art handoff risks gaps.
+- **Minimum implementation plan**
+  1. Keep the existing stick-figure rig (rectangle body + hitbox) as the guaranteed fallback and document it in the asset checklist so designers know the baseline survives missing art.
+  2. Create TODO slots for each fighter animation state (idle, run, jump, punch, kick, hit, KO) with expected resolution, pivot, and naming (e.g., `fighter-idle.png`) so sprite sheets can drop in without Phaser code churn.
+  3. Ship an asset manifest (JSON or TS module) under `src/game/arena/` that declares the sprite keys required by the loader so QA can quickly confirm when all art milestones are met.
+
 ---
 
 This gap analysis should be revisited after each milestone PR lands so the shared checklist stays accurate.
