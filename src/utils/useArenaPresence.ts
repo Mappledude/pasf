@@ -43,6 +43,16 @@ const collectMissingPlayerIds = (entries: ArenaPresenceEntry[]): string[] => {
   return missing;
 };
 
+const filterActiveEntries = (entries: ArenaPresenceEntry[]): ArenaPresenceEntry[] => {
+  const now = Date.now();
+  return entries.filter((entry) => {
+    if (!entry.lastSeen) return true;
+    const parsed = Date.parse(entry.lastSeen);
+    if (!Number.isFinite(parsed)) return true;
+    return now - parsed <= 20_000;
+  });
+};
+
 export const primePresenceDisplayNameCache = (
   playerId?: string | null,
   value?: string | null,
@@ -132,10 +142,10 @@ export function useArenaPresence(arenaId?: string): UseArenaPresenceResult {
         unsub = watchArenaPresence(arenaId, (entries) => {
           if (cancelled) return;
           const currentGen = ++generation;
-          latestEntries = entries;
-          setPlayers(applyCachedDisplayNames(entries));
+          latestEntries = filterActiveEntries(entries);
+          setPlayers(applyCachedDisplayNames(latestEntries));
           setLoading(false);
-          const missingIds = collectMissingPlayerIds(entries);
+          const missingIds = collectMissingPlayerIds(latestEntries);
           if (!missingIds.length) {
             return;
           }

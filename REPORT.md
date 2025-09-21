@@ -133,6 +133,13 @@ This report enumerates the gaps between the current lobby scaffold and the "From
   - Presence entries now store `displayName` and `arenaId`, and the client resolves and primes cached friendly names from the authenticated profile or the `players/{playerId}` document before joining.
   - UI chips consume the resolved `displayName` (or codename) only, ensuring presence renders readable names without UID fallbacks.
 
+## Presence TTL / Cleanup
+- **Change summary**
+  - Presence writes now stamp `lastSeen` with `serverTimestamp()` and `expireAt` ~45 seconds into the future. Firestore's TTL policy can target `expireAt` to garbage-collect orphaned presence docs when clients disconnect without hitting `leaveArena`.
+  - Arena and lobby clients filter presence snapshots client-side when `now - lastSeen > 20s`, keeping UI occupancy counts aligned with TTL lag.
+- **Operational note**
+  - Update the Firestore TTL configuration to track `expireAt` on `/arenas/{arenaId}/presence/{presenceId}` so Cloud TTL purges stragglers. Existing unload handlers (`leaveArena` + `navigator.sendBeacon`) remain the fast-path for immediate cleanup; TTL is a safety net.
+
 ---
 
 This gap analysis should be revisited after each milestone PR lands so the shared checklist stays accurate.
