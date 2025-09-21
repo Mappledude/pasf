@@ -1,4 +1,4 @@
-import { writeArenaInput, type ArenaInputWrite } from "../firebase";
+import { deleteArenaInput, writeArenaInput, type ArenaInputWrite } from "../firebase";
 
 const THROTTLE_MS = 100;
 
@@ -150,8 +150,12 @@ export function publishInput(input: PlayerInput): void {
 
 export function disposeActionBus(): void {
   if (!busState) return;
+  const { arenaId, playerId } = busState;
   if (busState.pendingTimer) {
     clearTimeout(busState.pendingTimer);
   }
   busState = null;
+  void deleteArenaInput(arenaId, playerId).catch((error) => {
+    console.warn("[NET] input dispose cleanup failed", error);
+  });
 }

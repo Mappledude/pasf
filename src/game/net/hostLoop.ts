@@ -23,6 +23,7 @@ export interface HostLoopController {
 const DEFAULT_TICK_RATE = 11;
 const MAX_DT_MS = 250;
 const LEADERBOARD_DEBUG = import.meta.env?.VITE_DEBUG_FIREBASE === "true" || import.meta.env?.DEV;
+const LIVE_INPUT_WINDOW_MS = 200;
 
 function buildActions(
   arenaId: string,
@@ -171,7 +172,40 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
     busy = true;
     try {
       const inputs = await fetchArenaInputs(options.arenaId);
-      const participants = selectParticipants(inputs, options.hostId);
+      const fetchNowMs = Date.now();
+      const liveInputs = inputs.filter((entry) => {
+        const updatedAtMs = entry.updatedAt ? Date.parse(entry.updatedAt) : NaN;
+        if (!Number.isFinite(updatedAtMs)) {
+          return false;
+        }
+        return fetchNowMs - updatedAtMs <= LIVE_INPUT_WINDOW_MS;
+      });
+      const liveIds = new Set(liveInputs.map((entry) => entry.playerId));
+      const staleEntries = inputs
+        .filter((entry) => !liveIds.has(entry.playerId))
+        .map((entry) => {
+          const updatedAtMs = entry.updatedAt ? Date.parse(entry.updatedAt) : NaN;
+          return {
+            playerId: entry.playerId,
+            updatedAt: entry.updatedAt,
+            ageMs: Number.isFinite(updatedAtMs) ? fetchNowMs - updatedAtMs : null,
+          };
+        });
+
+      logger.debug?.("[hostLoop] live input filter", {
+        arenaId: options.arenaId,
+        total: inputs.length,
+        livePlayerIds: liveInputs.map((entry) => entry.playerId),
+        stale: staleEntries,
+      });
+
+      const participants = selectParticipants(liveInputs, options.hostId);
+
+      logger.debug?.("[hostLoop] participant selection", {
+        arenaId: options.arenaId,
+        candidates: liveInputs.map((entry) => entry.playerId),
+        selected: participants.map((entry) => entry.playerId),
+      });
       if (!participants.length) {
         sim = null;
         playerOrder = [];
