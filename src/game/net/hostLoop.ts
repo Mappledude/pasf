@@ -5,6 +5,7 @@ import {
   type ArenaInputSnapshot,
 } from "../../firebase";
 import type { ArenaPresenceEntry } from "../../types/models";
+import { isPresenceEntryActive } from "../../utils/presenceThresholds";
 
 export interface HostLoopOptions {
   arenaId: string;
@@ -18,7 +19,6 @@ export interface HostLoopController {
 }
 
 const DEFAULT_TICK_RATE = 11;
-const ACTIVE_WINDOW_MS = 20_000;
 const MOVE_SPEED = 240; // px/s
 const GRAVITY = 1_200; // px/s^2
 const JUMP_VELOCITY = -420; // px/s (negative = upward)
@@ -88,13 +88,11 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
     for (const entry of entries) {
       const uid = entry.authUid ?? entry.playerId;
       if (!uid) continue;
-      const lastSeenMs = entry.lastSeen ? Date.parse(entry.lastSeen) : NaN;
-      if (!Number.isFinite(lastSeenMs)) {
+      if (!isPresenceEntryActive(entry, now)) {
         continue;
       }
-      if (now - lastSeenMs > ACTIVE_WINDOW_MS) {
-        continue;
-      }
+      const parsedLastSeen = entry.lastSeen ? Date.parse(entry.lastSeen) : Number.NaN;
+      const lastSeenMs = Number.isFinite(parsedLastSeen) ? parsedLastSeen : now;
       active.add(uid);
       const existing = fighters.get(uid);
       const name = entry.codename ?? entry.displayName ?? uid.slice(0, 6);

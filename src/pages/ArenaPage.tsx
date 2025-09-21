@@ -27,6 +27,11 @@ import {
   primePresenceDisplayNameCache,
 } from "../utils/useArenaPresence";
 import { usePresenceRoster } from "../utils/useArenaPresence";
+import {
+  HEARTBEAT_ACTIVE_WINDOW_MS,
+  HEARTBEAT_INTERVAL_MS,
+  PRESENCE_GRACE_BUFFER_MS,
+} from "../utils/presenceThresholds";
 
 
 import { useAuth } from "../context/AuthContext";
@@ -286,12 +291,24 @@ export default function ArenaPage() {
 
         debugLog("[PRESENCE] join complete", { arenaId, uid });
 
+        debugLog("[PRESENCE] heartbeat schedule", {
+          arenaId,
+          uid,
+          intervalMs: HEARTBEAT_INTERVAL_MS,
+          activeWindowMs: HEARTBEAT_ACTIVE_WINDOW_MS,
+          graceMs: PRESENCE_GRACE_BUFFER_MS,
+        });
+
         heartbeat = setInterval(() => {
           debugLog("[PRESENCE] heartbeat", { arenaId, uid });
           pushHeartbeat().catch((e) => {
             debugWarn("[PRESENCE] heartbeat failed", e);
           });
-        }, 10_000);
+        }, HEARTBEAT_INTERVAL_MS);
+        // Heartbeats fire every ~10s (HEARTBEAT_INTERVAL_MS). Presence consumers keep entries active
+        // while heartbeats land within ~20s (HEARTBEAT_ACTIVE_WINDOW_MS) of the last seen timestamp
+        // and also honor Firestore's expireAt plus an extra 60s (PRESENCE_GRACE_BUFFER_MS). QA:
+        // combine those numbers when reasoning about failover/quorum timing.
       } catch (e) {
         if (cancelled) return;
         console.error("[PRESENCE] join failed", e);
