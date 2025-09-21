@@ -22,7 +22,7 @@ const formattedRoster = useMemo(() => {
   return rosterCount > 3 ? `${head} (+${rosterCount - 3})` : head;
 }, [rosterNames, rosterCount]);
 
-const occupancy = rosterCount;
+const overflow = Math.max(0, rosterCount - rosterNames.length);
 
 React.useEffect(() => {
   if (presenceLoading) return;
