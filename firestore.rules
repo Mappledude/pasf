@@ -46,6 +46,11 @@ service cloud.firestore {
       allow read, write: if isSignedIn();
     }
 
+    // Boss (new)
+    match /boss/{doc} {
+      allow read, write: if isSignedIn();
+    }
+
     // Leaderboard (existing)
     match /leaderboard/{entry} {
       allow read: if isSignedIn();
