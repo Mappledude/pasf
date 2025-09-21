@@ -36,5 +36,19 @@ findPlayerByPasscode("shadowblade") => { id: "dG7ci5dDLJYbPE1l1x2U", codename: "
 
 With these validations in place, we have high confidence that anonymous auth, passcode login, and arena presence streaming operate end to end.
 
+### Presence heartbeats
+
+```
+[PRESENCE] join effect starting { arenaId: "dojo-alpha", uid: "ygvJ2ZbTNzcq7l8q8IlTlt4ff4C3", codename: "Specter" }
+[PRESENCE] ensureAnonAuth { arenaId: "dojo-alpha", uid: "ygvJ2ZbTNzcq7l8q8IlTlt4ff4C3" }
+[PRESENCE] joinArena { arenaId: "dojo-alpha", uid: "ygvJ2ZbTNzcq7l8q8IlTlt4ff4C3", codename: "Specter" }
+[PRESENCE] join complete { arenaId: "dojo-alpha", uid: "ygvJ2ZbTNzcq7l8q8IlTlt4ff4C3" }
+[PRESENCE] heartbeat { arenaId: "dojo-alpha", uid: "ygvJ2ZbTNzcq7l8q8IlTlt4ff4C3" }
+[PRESENCE] leaveArena { arenaId: "dojo-alpha", uid: "ygvJ2ZbTNzcq7l8q8IlTlt4ff4C3" }
+```
+
+- Opening a new browser window creates `/arenas/dojo-alpha/presence/ygvJ2ZbTNzcq7l8q8IlTlt4ff4C3` and updates its codename on every heartbeat.
+- Closing the window immediately deletes the corresponding presence document, confirming the cleanup path.
+
 ## Deployment Notes
 - After updating the Firestore security rules, remember to publish them to the production project by running `firebase deploy --only firestore:rules --project stickfightpa`.

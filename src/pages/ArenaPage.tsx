@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { db } from "../firebase";
+import { db, ensureAnonAuth, joinArena, leaveArena } from "../firebase";
 import {
   ensureArenaState,
   watchArenaState,
@@ -18,8 +18,7 @@ export default function ArenaPage() {
   const [state, setState] = useState<ArenaState | undefined>(undefined);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const { players: presence, loading: presenceLoading, error: presenceError } = useArenaPresence(arenaId);
-  const { user, loading: authLoading } = useAuth();
-  const authReady = !!user && !authLoading;
+  const { user, player, loading: authLoading, authReady } = useAuth();
 
   // Auto-init + subscribe
   useEffect(() => {
@@ -89,6 +88,61 @@ export default function ArenaPage() {
       cancelled = true;
     };
   }, [arenaId, authReady, user?.uid]);
+
+  useEffect(() => {
+    if (!arenaId) return;
+    if (!authReady) {
+      console.info("[PRESENCE] join skipped: auth not ready", { arenaId });
+      return;
+    }
+    if (!user?.uid) {
+      console.info("[PRESENCE] join skipped: missing uid", { arenaId });
+      return;
+    }
+
+    const uid = user.uid;
+    const codename = player?.codename ?? uid.slice(0, 6);
+    const profileId = player?.id;
+    let cancelled = false;
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+    console.info("[PRESENCE] join effect starting", { arenaId, uid, codename });
+
+    (async () => {
+      try {
+        console.info("[PRESENCE] ensureAnonAuth", { arenaId, uid });
+        await ensureAnonAuth();
+        if (cancelled) return;
+
+        console.info("[PRESENCE] joinArena", { arenaId, uid, codename });
+        await joinArena(arenaId, uid, codename, profileId);
+        if (cancelled) return;
+
+        console.info("[PRESENCE] join complete", { arenaId, uid });
+
+        heartbeat = setInterval(() => {
+          console.info("[PRESENCE] heartbeat", { arenaId, uid });
+          joinArena(arenaId, uid, codename, profileId).catch((e) => {
+            console.warn("[PRESENCE] heartbeat failed", e);
+          });
+        }, 60000);
+      } catch (e) {
+        if (cancelled) return;
+        console.error("[PRESENCE] join failed", e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (heartbeat) {
+        clearInterval(heartbeat);
+      }
+      console.info("[PRESENCE] leaveArena", { arenaId, uid });
+      leaveArena(arenaId, uid).catch((e) => {
+        console.warn("[PRESENCE] leave failed", e);
+      });
+    };
+  }, [arenaId, authReady, player?.codename, player?.id, user?.uid]);
 
   const agents = useMemo(() => Object.keys(state?.players ?? {}), [state]);
 
