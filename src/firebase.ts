@@ -132,7 +132,6 @@ export interface BossProfile {
 export interface PlayerProfile {
   id: string;
   codename: string;
-  passcode?: string;
   createdAt: ISODate;
   lastActiveAt?: ISODate;
 }
@@ -199,19 +198,20 @@ export const normalizePasscode = (passcode: string) => passcode.trim().toLowerCa
 
 export const createPlayer = async (input: CreatePlayerInput) => {
   await ensureAnonAuth();
-  const playersRef = collection(db, "players");
   const now = serverTimestamp();
   const normalizedPasscode = normalizePasscode(input.passcode);
-  const pRef = await addDoc(playersRef, {
+  const playersRef = collection(db, "players");
+  const playerRef = doc(playersRef);
+  await setDoc(playerRef, {
     codename: input.codename,
-    passcode: normalizedPasscode,
     createdAt: now,
+    lastActiveAt: now,
   });
   await setDoc(doc(db, "passcodes", normalizedPasscode), {
-    playerId: pRef.id,
+    playerId: playerRef.id,
     createdAt: now,
   });
-  return pRef.id;
+  return playerRef.id;
 };
 
 export const findPlayerByPasscode = async (passcode: string) => {
@@ -225,7 +225,6 @@ export const findPlayerByPasscode = async (passcode: string) => {
       return {
         id: pSnap.id,
         codename: d.codename,
-        passcode: d.passcode,
         createdAt: d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString(),
         lastActiveAt: d.lastActiveAt?.toDate?.().toISOString?.(),
       } as PlayerProfile;
@@ -242,7 +241,6 @@ export const findPlayerByPasscode = async (passcode: string) => {
     return {
       id: s.id,
       codename: d.codename,
-      passcode: d.passcode,
       createdAt: d.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString(),
       lastActiveAt: d.lastActiveAt?.toDate?.().toISOString?.(),
     } as PlayerProfile;
@@ -261,25 +259,20 @@ export const loginWithPasscode = async (passcode: string): Promise<PlayerProfile
   console.info(`[AUTH] loginWithPasscode ok ${playerProfile.id}`);
   return playerProfile;
 };
-
 export const listPlayers = async (): Promise<PlayerProfile[]> => {
   await ensureAnonAuth();
   const snapshot = await getDocs(collection(db, "players"));
   return snapshot.docs.map((docSnap) => {
-    const data = docSnap.data() as any;
-    const { passcode: _ignoredPasscode, ...rest } = data ?? {};
-    const createdAt =
-      data?.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString();
-    const lastActiveAt = data?.lastActiveAt?.toDate?.().toISOString?.();
-
+    const d = docSnap.data() as any;
     return {
       id: docSnap.id,
-      ...rest,
-      createdAt,
-      lastActiveAt,
+      codename: d.codename,
+      createdAt: d.createdAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
+      lastActiveAt: d.lastActiveAt?.toDate?.()?.toISOString?.(),
     } as PlayerProfile;
   });
 };
+
 
 export const updatePlayerActivity = async (playerId: string) => {
   await updateDoc(doc(db, "players", playerId), { lastActiveAt: serverTimestamp() });

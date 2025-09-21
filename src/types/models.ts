@@ -7,7 +7,6 @@ export interface BossProfile {
 export interface PlayerProfile {
   id: string;
   codename: string;
-  passcode?: string;
   createdAt: string;
   lastActiveAt?: string;
 }
