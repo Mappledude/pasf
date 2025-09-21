@@ -36,6 +36,7 @@ export default class ArenaScene extends Phaser.Scene {
   private lastHitAt = 0;
   private controlsLocked = false;
   private latestOpponentName = "";
+  private textureAddHandler?: (key: string, texture: Phaser.Textures.Texture) => void;
 
   constructor() {
     super("Arena");
@@ -74,6 +75,14 @@ export default class ArenaScene extends Phaser.Scene {
 
     this.createHud();
     this.createKoText();
+
+    this.tryPromoteFighterRigs();
+    this.textureAddHandler = () => {
+      this.tryPromoteFighterRigs();
+      this.player?.handleTextureUpdate();
+      this.opponent?.handleTextureUpdate();
+    };
+    this.textures.on(Phaser.Textures.Events.ADD, this.textureAddHandler, this);
 
     this.sync = createArenaSync({ arenaId: this.arenaId, meId: this.me.id });
     this.unsubscribe = this.sync.subscribe(this.handleArenaState);
@@ -160,6 +169,9 @@ export default class ArenaScene extends Phaser.Scene {
       y: opponentState.y ?? this.spawn.y,
       facing: opponentState.facing === "L" ? "L" : "R",
       hp: oppHp,
+      anim: opponentState.anim,
+      vx: opponentState.vx,
+      vy: opponentState.vy,
     });
 
     if (prevOppHp > 0 && oppHp <= 0) {
@@ -260,6 +272,10 @@ export default class ArenaScene extends Phaser.Scene {
   }
 
   private handleShutdown() {
+    if (this.textureAddHandler) {
+      this.textures.off(Phaser.Textures.Events.ADD, this.textureAddHandler, this);
+      this.textureAddHandler = undefined;
+    }
     this.koTween?.stop();
     this.respawnTimer?.remove(false);
     this.respawnTimer = undefined;
@@ -279,5 +295,10 @@ export default class ArenaScene extends Phaser.Scene {
     this.sync = undefined;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+  }
+
+  private tryPromoteFighterRigs() {
+    this.player?.refreshRig();
+    this.opponent?.refreshRig();
   }
 }
