@@ -213,18 +213,26 @@ const arenaTitle = arenaName ?? "Arena";
     let heartbeat: ReturnType<typeof setInterval> | null = null;
     debugLog("[PRESENCE] join effect starting", { arenaId, uid, codename });
 
-    const computeDisplayName = async (): Promise<string | null> => {
+    const computeDisplayName = async (): Promise<string> => {
+      const fallback = `Player ${uid.slice(-2).toUpperCase()}`;
+      const direct = typeof player?.displayName === "string" ? player.displayName.trim() : "";
+      if (direct.length > 0) {
+        if (profileId) {
+          primePresenceDisplayNameCache(profileId, direct);
+        }
+        return direct;
+      }
+
       if (profileId) {
         const resolved = await resolvePresenceDisplayName(profileId);
         const trimmed = resolved.trim();
-        const normalized = trimmed.length > 0 ? trimmed : null;
-        if (normalized) {
-          primePresenceDisplayNameCache(profileId, normalized);
+        if (trimmed.length > 0) {
+          primePresenceDisplayNameCache(profileId, trimmed);
+          return trimmed;
         }
-        return normalized;
       }
-      const fallback = typeof player?.displayName === "string" ? player.displayName.trim() : "";
-      return fallback.length > 0 ? fallback : null;
+
+      return fallback;
     };
 
     const pushPresence = async () => {

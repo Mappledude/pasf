@@ -135,10 +135,22 @@ This report enumerates the gaps between the current lobby scaffold and the "From
 
 ## Presence TTL / Cleanup
 - **Change summary**
-  - Presence writes now stamp `lastSeen` with `serverTimestamp()` and `expireAt` ~45 seconds into the future. Firestore's TTL policy can target `expireAt` to garbage-collect orphaned presence docs when clients disconnect without hitting `leaveArena`.
-  - Arena and lobby clients filter presence snapshots client-side when `now - lastSeen > 20s`, keeping UI occupancy counts aligned with TTL lag.
+  - Presence writes now stamp `lastSeen` with `serverTimestamp()` and set `expireAt` ~45 seconds in the future. Firestore TTL targets `expireAt` to garbage-collect orphaned presence docs when clients disconnect without hitting `leaveArena`.
+  - Arena and Lobby clients filter presence snapshots client-side when `now - lastSeen > 20s`, keeping UI occupancy counts aligned with TTL lag.
 - **Operational note**
-  - Update the Firestore TTL configuration to track `expireAt` on `/arenas/{arenaId}/presence/{presenceId}` so Cloud TTL purges stragglers. Existing unload handlers (`leaveArena` + `navigator.sendBeacon`) remain the fast-path for immediate cleanup; TTL is a safety net.
+  - Configure Firestore TTL to track `expireAt` on the **presence collection group**: `/arenas/{arenaId}/presence/{presenceId}`. Existing unload handlers (`leaveArena` + `navigator.sendBeacon`) remain the fast path; TTL is the safety net.
+
+### Manual verification
+1. Launch the client and navigate to any arena (e.g., `/arena/dev`).
+2. Use a profile with `displayName` and join the arena; confirm the Agents panel renders that name immediately.
+3. From a second session **without** a profile `displayName`, join the same arena; the chip should fall back to `Player XX` (last two UID characters).
+4. In Firestore, open `arenas/{arenaId}/presence/{uid}` and confirm:
+   - `displayName` matches the chip,
+   - `lastSeen` updates every ~10s (heartbeat),
+   - `expireAt` is ~45s ahead of current time.
+
+### Telemetry snippets
+
 
 ---
 
