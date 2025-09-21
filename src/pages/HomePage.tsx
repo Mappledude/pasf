@@ -12,27 +12,23 @@ interface ArenaListItemProps {
 }
 
 const ArenaListItem = ({ arena, onJoin }: ArenaListItemProps) => {
-// seatless roster (Lobby card)
-const { loading: presenceLoading } = useArenaPresence(arena.id);
-const { names: rosterNames, count: rosterCount } = usePresenceRoster(arena.id);
-const overflow = Math.max(0, rosterCount - rosterNames.length);
+  // seatless roster (Lobby card)
+  const { loading: presenceLoading } = useArenaPresence(arena.id);
+  const { names: rosterNames, count: rosterCount } = usePresenceRoster(arena.id);
+  const overflow = Math.max(0, rosterCount - rosterNames.length);
 
-const overflow = Math.max(rosterCount - rosterNames.length, 0);
+  // "Ben, Zane, Asha (+2)" style chip
+  const formattedRoster = useMemo(() => {
+    const head = rosterNames.slice(0, 3).join(", ");
+    return rosterCount > 3 ? `${head} (+${rosterCount - 3})` : head;
+  }, [rosterNames, rosterCount]);
 
-// "Ben, Zane, Asha (+2)" style chip
-const formattedRoster = useMemo(() => {
-  const head = rosterNames.slice(0, 3).join(", ");
-  return rosterCount > 3 ? `${head} (+${rosterCount - 3})` : head;
-}, [rosterNames, rosterCount]);
-
-const overflow = Math.max(0, rosterCount - rosterNames.length);
-
-React.useEffect(() => {
-  if (presenceLoading) return;
-  console.log(
-    `[LOBBY] arena=${arena.id} liveCount=${rosterCount} names=${formattedRoster}`
-  );
-}, [arena.id, presenceLoading, rosterCount, formattedRoster]);
+  React.useEffect(() => {
+    if (presenceLoading) return;
+    console.log(
+      `[LOBBY] arena=${arena.id} liveCount=${rosterCount} names=${formattedRoster}`
+    );
+  }, [arena.id, presenceLoading, rosterCount, formattedRoster]);
 
   const capacityLabel = useMemo(() => {
     if (presenceLoading) return null;
