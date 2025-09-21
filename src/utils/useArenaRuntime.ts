@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Phaser from "phaser";
 
-import { initArenaPlayerState } from "../firebase";
 import { makeGame } from "../game/phaserGame";
 import ArenaScene, { type ArenaSceneConfig } from "../game/arena/ArenaScene";
 import { startHostLoop, type HostLoopController } from "../game/net/hostLoop";
 import { initActionBus, disposeActionBus } from "../net/ActionBus";
 import { createKeyBinder } from "../game/input/KeyBinder";
 import type { ArenaPresenceEntry } from "../types/models";
+import { writeArenaWriter } from "../firebase";
 
 const DEBUG = import.meta.env.DEV && import.meta.env.VITE_DEBUG_ARENA_PAGE === "true";
 
@@ -18,6 +18,7 @@ export interface UseArenaRuntimeOptions {
   meUid?: string | null;
   codename?: string | null;
   presence: ArenaPresenceEntry[];
+  writerUid?: string | null;
   canvasRef: React.RefObject<HTMLDivElement | null>;
   onBootError?: (message: string) => void;
 }
@@ -37,8 +38,20 @@ function destroyGame(game: Phaser.Game | null) {
   }
 }
 
+const ACTIVE_PRESENCE_WINDOW_MS = 20_000;
+
 export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntimeResult {
-  const { arenaId, authReady, stateReady, meUid, codename, presence, canvasRef, onBootError } = options;
+  const {
+    arenaId,
+    authReady,
+    stateReady,
+    meUid,
+    codename,
+    presence,
+    writerUid: stateWriterUid,
+    canvasRef,
+    onBootError,
+  } = options;
 
   const gameRef = useRef<Phaser.Game | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
@@ -47,6 +60,101 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
   const keyBinderRef = useRef<ReturnType<typeof createKeyBinder> | null>(null);
   const hostLogRef = useRef<string | null>(null);
   const [gameBooted, setGameBooted] = useState(false);
+  const writerLogRef = useRef<string | null>(null);
+  const writerPersistRef = useRef<string | null>(null);
+
+  const activePresence = useMemo(() => {
+    const now = Date.now();
+    return presence.filter((entry) => {
+      const uid = entry.authUid ?? entry.playerId;
+      if (!uid) return false;
+      const lastSeenMs = entry.lastSeen ? Date.parse(entry.lastSeen) : NaN;
+      if (!Number.isFinite(lastSeenMs)) {
+        return false;
+      }
+      return now - lastSeenMs <= ACTIVE_PRESENCE_WINDOW_MS;
+    });
+  }, [presence]);
+
+  const electedWriterUid = useMemo(() => {
+    if (!activePresence.length) {
+      return stateWriterUid ?? null;
+    }
+    const byUid = new Map(
+      activePresence
+        .map((entry) => [entry.authUid ?? entry.playerId ?? "", entry] as const)
+        .filter((pair): pair is readonly [string, ArenaPresenceEntry] => pair[0].length > 0),
+    );
+    if (stateWriterUid && byUid.has(stateWriterUid)) {
+      return stateWriterUid;
+    }
+    const sorted = [...byUid.values()].sort((a, b) => {
+      const parseTs = (value?: string) => {
+        if (!value) return Number.POSITIVE_INFINITY;
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+      };
+      const aTs = parseTs(a.joinedAt);
+      const bTs = parseTs(b.joinedAt);
+      if (aTs !== bTs) return aTs - bTs;
+      const aKey = (a.authUid ?? a.playerId ?? "").toString();
+      const bKey = (b.authUid ?? b.playerId ?? "").toString();
+      return aKey.localeCompare(bKey);
+    });
+    const first = sorted[0];
+    return first ? first.authUid ?? first.playerId ?? null : null;
+  }, [activePresence, stateWriterUid]);
+
+  const writerEntry = useMemo(() => {
+    if (!electedWriterUid) return null;
+    return presence.find((entry) => {
+      const uid = entry.authUid ?? entry.playerId;
+      return uid === electedWriterUid;
+    }) ?? null;
+  }, [electedWriterUid, presence]);
+
+  useEffect(() => {
+    if (!arenaId) return;
+    const logKey = electedWriterUid ?? "(none)";
+    if (writerLogRef.current === logKey) {
+      return;
+    }
+    writerLogRef.current = logKey;
+    if (DEBUG) {
+      console.info(`[WRITER] elected uid=${logKey}`);
+    }
+  }, [arenaId, electedWriterUid]);
+
+  useEffect(() => {
+    if (!arenaId) return;
+    if (!meUid) return;
+    if (electedWriterUid !== meUid) {
+      writerPersistRef.current = null;
+      return;
+    }
+    if (stateWriterUid === electedWriterUid) {
+      return;
+    }
+    if (writerPersistRef.current === electedWriterUid) {
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        await writeArenaWriter(arenaId, electedWriterUid);
+        if (!cancelled) {
+          writerPersistRef.current = electedWriterUid;
+        }
+      } catch (error) {
+        if (!cancelled && DEBUG) {
+          console.warn("[WRITER] failed to persist", error);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [arenaId, electedWriterUid, meUid, stateWriterUid]);
 
   const teardown = useCallback(() => {
     const cleanup = cleanupRef.current;
@@ -134,45 +242,23 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     };
   }, [arenaId, codename, meUid, shouldBoot]);
 
-  const hostEntry = useMemo(() => {
-    if (!presence.length) return null;
-    const parseTs = (value?: string) => {
-      if (!value) return Number.POSITIVE_INFINITY;
-      const parsed = Date.parse(value);
-      return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
-    };
-    return [...presence].sort((a, b) => {
-      const aTs = parseTs(a.joinedAt);
-      const bTs = parseTs(b.joinedAt);
-      if (aTs !== bTs) return aTs - bTs;
-      const aKey = a.playerId ?? a.authUid ?? "";
-      const bKey = b.playerId ?? b.authUid ?? "";
-      return aKey.localeCompare(bKey);
-    })[0];
-  }, [presence]);
-
-  const hostAuthUid = hostEntry?.authUid ?? null;
-  const hostPlayerId = hostEntry?.playerId ?? null;
-  const isHost = Boolean(meUid && hostAuthUid && hostAuthUid === meUid);
+  const writerUid = electedWriterUid;
+  const isWriter = Boolean(meUid && writerUid && writerUid === meUid);
 
   useEffect(() => {
     if (!arenaId) return;
-    const joinedAt = hostEntry?.joinedAt ?? null;
-    const logKey = hostEntry ? `${hostEntry.authUid ?? "(unknown)"}|${joinedAt ?? "(missing)"}` : "none";
+    const joinedAt = writerEntry?.joinedAt ?? null;
+    const logKey = writerEntry ? `${writerEntry.authUid ?? "(unknown)"}|${joinedAt ?? "(missing)"}` : "none";
     if (hostLogRef.current === logKey) {
       return;
     }
     hostLogRef.current = logKey;
-    if (DEBUG) {
-      if (!hostEntry) {
-        console.info(`[HOST] no active host for arena=${arenaId}`);
-      } else {
-        console.info(
-          `[HOST] elected authUid=${hostEntry.authUid ?? "(unknown)"} playerId=${hostEntry.playerId ?? "(unknown)"} joinedAt=${joinedAt ?? "(missing)"} lastSeen=${hostEntry.lastSeen ?? "(missing)"}`,
-        );
-      }
+    if (DEBUG && writerEntry) {
+      console.info(
+        `[HOST] writer details authUid=${writerEntry.authUid ?? "(unknown)"} playerId=${writerEntry.playerId ?? "(unknown)"} joinedAt=${joinedAt ?? "(missing)"} lastSeen=${writerEntry.lastSeen ?? "(missing)"}`,
+      );
     }
-  }, [arenaId, hostEntry, hostEntry?.authUid, hostEntry?.joinedAt, hostEntry?.lastSeen, hostEntry?.playerId]);
+  }, [arenaId, writerEntry, writerEntry?.authUid, writerEntry?.joinedAt, writerEntry?.lastSeen, writerEntry?.playerId]);
 
   useEffect(() => {
     if (!shouldBoot) {
@@ -254,7 +340,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       return;
     }
 
-    if (!isHost) {
+    if (!isWriter) {
       if (hostLoopRef.current) {
         hostLoopRef.current.stop();
         hostLoopRef.current = null;
@@ -263,7 +349,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       return;
     }
 
-    const hostKey = `${arenaId}:${hostPlayerId ?? meUid}`;
+    const hostKey = `${arenaId}:${writerUid ?? meUid}`;
     if (hostContextRef.current === hostKey && hostLoopRef.current) {
       return;
     }
@@ -271,26 +357,17 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     hostContextRef.current = hostKey;
     let cancelled = false;
 
-    const playerId = meUid;
-    const playerCodename = codename ?? playerId.slice(0, 6);
-    const spawn = { x: 240, y: 540 - 40 - 60 };
-
     (async () => {
       try {
         if (DEBUG) {
-          console.info("[ARENA] host bootstrap starting", { arenaId, playerId });
+          console.info("[ARENA] host bootstrap starting", { arenaId, playerId: meUid });
         }
-        await initArenaPlayerState(arenaId!, { id: playerId, codename: playerCodename }, spawn);
-        if (cancelled) {
-          return;
-        }
-
         if (hostLoopRef.current) {
           hostLoopRef.current.stop();
         }
         const controller = startHostLoop({
           arenaId: arenaId!,
-          hostId: hostPlayerId ?? playerId,
+          writerUid: writerUid ?? meUid!,
           log: DEBUG ? console : undefined,
         });
         hostLoopRef.current = controller;
@@ -308,7 +385,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     return () => {
       cancelled = true;
     };
-  }, [arenaId, codename, hostPlayerId, isHost, meUid, onBootError, shouldBoot, teardown]);
+  }, [arenaId, isWriter, meUid, onBootError, shouldBoot, teardown, writerUid]);
 
   return { gameBooted };
 }

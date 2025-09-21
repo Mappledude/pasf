@@ -192,21 +192,20 @@ export interface ArenaInputSnapshot {
   updatedAt?: ISODate;
 }
 
-export interface ArenaStateWritePlayer {
-  codename?: string;
+export interface ArenaEntityState {
   x: number;
   y: number;
   vx: number;
   vy: number;
   facing: "L" | "R";
   hp: number;
-  anim?: string;
+  name?: string;
 }
 
 export interface ArenaStateWrite {
   tick: number;
-  tMs: number;
-  players: Record<string, ArenaStateWritePlayer>;
+  writerUid: string | null;
+  entities: Record<string, ArenaEntityState>;
 }
 
 export interface LeaderboardEntry {
@@ -689,35 +688,6 @@ const serializeInputSnapshot = (snap: QueryDocumentSnapshot): ArenaInputSnapshot
   };
 };
 
-export async function initArenaPlayerState(
-  arenaId: string,
-  me: { id: string; codename: string },
-  spawn: { x: number; y: number },
-) {
-  await ensureAnonAuth();
-  const ref = arenaStateDoc(arenaId);
-  await setDoc(
-    ref,
-    {
-      tick: 0,
-      players: {
-        [me.id]: {
-          codename: me.codename,
-          x: spawn.x,
-          y: spawn.y,
-          vx: 0,
-          vy: 0,
-          facing: "R",
-          hp: 100,
-          updatedAt: serverTimestamp(),
-        },
-      },
-      lastUpdate: serverTimestamp(),
-    },
-    { merge: true },
-  );
-}
-
 export async function updateArenaPlayerState(
   arenaId: string,
   meId: string,
@@ -727,7 +697,7 @@ export async function updateArenaPlayerState(
   await ensureAnonAuth();
   const ref = arenaStateDoc(arenaId);
   const payload: Record<string, unknown> = {
-    players: {
+    entities: {
       [meId]: {
         ...partial,
         updatedAt: serverTimestamp(),
@@ -824,9 +794,9 @@ export function watchArenaInputs(
 export async function writeArenaState(arenaId: string, state: ArenaStateWrite): Promise<void> {
   await ensureAnonAuth();
   const ref = arenaStateDoc(arenaId);
-  const players: Record<string, Record<string, unknown>> = {};
-  for (const [playerId, data] of Object.entries(state.players)) {
-    players[playerId] = {
+  const entities: Record<string, Record<string, unknown>> = {};
+  for (const [uid, data] of Object.entries(state.entities)) {
+    entities[uid] = {
       ...data,
       updatedAt: serverTimestamp(),
     };
@@ -835,8 +805,21 @@ export async function writeArenaState(arenaId: string, state: ArenaStateWrite): 
     ref,
     {
       tick: state.tick,
-      tMs: state.tMs,
-      players,
+      writerUid: state.writerUid,
+      entities,
+      lastUpdate: serverTimestamp(),
+    },
+    { merge: true },
+  );
+}
+
+export async function writeArenaWriter(arenaId: string, writerUid: string | null): Promise<void> {
+  await ensureAnonAuth();
+  const ref = arenaStateDoc(arenaId);
+  await setDoc(
+    ref,
+    {
+      writerUid,
       lastUpdate: serverTimestamp(),
     },
     { merge: true },
@@ -850,13 +833,13 @@ export async function applyDamage(arenaId: string, targetPlayerId: string, amoun
     const snap = await tx.get(ref);
     if (!snap.exists()) return;
     const data = snap.data() as any;
-    const cur = data.players?.[targetPlayerId];
+    const cur = data.entities?.[targetPlayerId];
     if (!cur) return;
     const hp = Math.max(0, Math.min(100, (cur.hp ?? 100) - amount));
     tx.set(
       ref,
       {
-        players: {
+        entities: {
           [targetPlayerId]: { hp, updatedAt: serverTimestamp() },
         },
         lastUpdate: serverTimestamp(),
@@ -877,7 +860,6 @@ export async function respawnPlayer(
     vx: 0,
     vy: 0,
     hp: 100,
-    anim: undefined,
   });
 }
 
