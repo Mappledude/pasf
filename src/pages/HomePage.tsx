@@ -2,7 +2,7 @@ import React, { FormEvent, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useArenas } from "../utils/useArenas";
-import { useArenaPresence } from "../utils/useArenaPresence";
+import { useArenaPresence, usePresenceRoster } from "../utils/useArenaPresence";
 import type { Arena } from "../types/models";
 
 interface ArenaListItemProps {
@@ -11,19 +11,20 @@ interface ArenaListItemProps {
 }
 
 const ArenaListItem = ({ arena, onJoin }: ArenaListItemProps) => {
-  const { players, loading: presenceLoading } = useArenaPresence(arena.id);
-  const occupancy = players.length;
+  const { loading: presenceLoading } = useArenaPresence(arena.id);
+  const { names: rosterNames, count: rosterCount } = usePresenceRoster(arena.id);
+  const overflow = Math.max(0, rosterCount - rosterNames.length);
   React.useEffect(() => {
     if (presenceLoading) return;
-    console.log(`[LOBBY] arena=${arena.id} liveCount=${occupancy}`);
-  }, [arena.id, occupancy, presenceLoading]);
+    console.log(`[LOBBY] arena=${arena.id} liveCount=${rosterCount}`);
+  }, [arena.id, presenceLoading, rosterCount]);
   const capacityLabel = useMemo(() => {
     if (presenceLoading) return null;
     if (arena.capacity) {
-      return `${occupancy}/${arena.capacity}`;
+      return `${rosterCount}/${arena.capacity}`;
     }
-    return `${occupancy} agents`;
-  }, [arena.capacity, occupancy, presenceLoading]);
+    return `${rosterCount} agents`;
+  }, [arena.capacity, presenceLoading, rosterCount]);
 
   return (
     <li>
@@ -31,6 +32,18 @@ const ArenaListItem = ({ arena, onJoin }: ArenaListItemProps) => {
         <strong>{arena.name}</strong>
         {arena.description ? <span className="muted">{arena.description}</span> : null}
       </div>
+      {presenceLoading ? (
+        <span className="skel" style={{ width: 160, height: 16, display: "block", marginTop: 8 }} />
+      ) : rosterNames.length ? (
+        <div className="chips" style={{ marginTop: 8 }}>
+          {rosterNames.map((name, index) => (
+            <span className="chip" key={`${name}-${index}`}>
+              {name}
+            </span>
+          ))}
+          {overflow > 0 ? <span className="chip muted">+{overflow}</span> : null}
+        </div>
+      ) : null}
       <div className="meta">
         {presenceLoading ? (
           <span className="skel" style={{ width: 80, height: 14 }} />
