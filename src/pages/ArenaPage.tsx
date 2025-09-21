@@ -1,4 +1,3 @@
-import { useArenaMeta } from "../utils/useArenaMeta";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 
@@ -7,6 +6,9 @@ import {
   ensureAnonAuth,
   joinArena,
   leaveArena,
+  claimArenaSeat,       // remove if not used
+  releaseArenaSeat,     // remove if not used
+  initArenaPlayerState, // remove if not used
   watchLeaderboard,
 } from "../firebase";
 import type { LeaderboardEntry } from "../firebase";
@@ -19,16 +21,18 @@ import {
   touchPlayer,
 } from "../lib/arenaState";
 import type { ArenaState } from "../lib/arenaState";
+
+import { useArenaMeta } from "../utils/useArenaMeta";
 import {
   useArenaPresence,
   usePresenceDisplayNameResolver,
   primePresenceDisplayNameCache,
 } from "../utils/useArenaPresence";
-// seatless: removed useArenaSeats import
 
 import { useAuth } from "../context/AuthContext";
 import TouchControls from "../game/input/TouchControls";
 import { useArenaRuntime } from "../utils/useArenaRuntime";
+
 
 // Optional: keep a gated warn helper (don’t also import debugWarn)
 const debugWarn = (...args: unknown[]) => {
