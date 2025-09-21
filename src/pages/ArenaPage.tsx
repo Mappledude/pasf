@@ -29,6 +29,7 @@ import {
   usePresenceDisplayNameResolver,
   primePresenceDisplayNameCache,
 } from "../utils/useArenaPresence";
+import { usePresenceRoster, formatRosterNames } from "../utils/usePresenceRoster";
 
 import { useAuth } from "../context/AuthContext";
 import TouchControls from "../game/input/TouchControls";
@@ -56,17 +57,23 @@ export default function ArenaPage() {
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
 
 
-  const { players: presence, loading: presenceLoading, error: presenceError } = useArenaPresence(arenaId);
-const { user, player, authReady } = useAuth();
+  const { players: presence, loading: presenceLoading, error: presenceError } =
+    useArenaPresence(arenaId);
+  const roster = usePresenceRoster(presence);
+  const formattedRosterNames = useMemo(
+    () => formatRosterNames(roster.map((entry) => entry.name)),
+    [roster],
+  );
+  const { user, player, authReady } = useAuth();
 
-const { arenaName, loading: arenaMetaLoading } = useArenaMeta(arenaId);
-const resolvePresenceDisplayName = usePresenceDisplayNameResolver();
+  const { arenaName, loading: arenaMetaLoading } = useArenaMeta(arenaId);
+  const resolvePresenceDisplayName = usePresenceDisplayNameResolver();
 
-// keep a one-time logger ref if later code logs the title once
-const titleLoggedRef = useRef(false);
+  // keep a one-time logger ref if later code logs the title once
+  const titleLoggedRef = useRef(false);
 
-// Human title for header; never show the doc id
-const arenaTitle = arenaName ?? "Arena";
+  // Human title for header; never show the doc id
+  const arenaTitle = arenaName ?? "Arena";
 
 
   useEffect(() => {
@@ -84,6 +91,14 @@ const arenaTitle = arenaName ?? "Arena";
     console.log(`[ARENA] title="${arenaTitle}" id=${arenaId}`);
     titleLoggedRef.current = true;
   }, [arenaId, arenaMetaLoading, arenaTitle]);
+
+  useEffect(() => {
+    if (!arenaId) return;
+    if (presenceLoading) return;
+    console.log(
+      `[ARENA] roster arena=${arenaId} n=${roster.length} names=${formattedRosterNames}`,
+    );
+  }, [arenaId, formattedRosterNames, presenceLoading, roster]);
 
   useEffect(() => {
     if (typeof window === "undefined") {

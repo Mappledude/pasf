@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useArenas } from "../utils/useArenas";
 import { useArenaPresence } from "../utils/useArenaPresence";
+import { usePresenceRoster, formatRosterNames } from "../utils/usePresenceRoster";
 import type { Arena } from "../types/models";
 
 interface ArenaListItemProps {
@@ -12,11 +13,17 @@ interface ArenaListItemProps {
 
 const ArenaListItem = ({ arena, onJoin }: ArenaListItemProps) => {
   const { players, loading: presenceLoading } = useArenaPresence(arena.id);
+  const roster = usePresenceRoster(players);
+  const rosterCount = roster.length;
+  const formattedRoster = useMemo(
+    () => formatRosterNames(roster.map((entry) => entry.name)),
+    [roster],
+  );
   const occupancy = players.length;
   React.useEffect(() => {
     if (presenceLoading) return;
-    console.log(`[LOBBY] arena=${arena.id} liveCount=${occupancy}`);
-  }, [arena.id, occupancy, presenceLoading]);
+    console.log(`[LOBBY] arena=${arena.id} n=${rosterCount} names=${formattedRoster}`);
+  }, [arena.id, formattedRoster, presenceLoading, rosterCount]);
   const capacityLabel = useMemo(() => {
     if (presenceLoading) return null;
     if (arena.capacity) {
