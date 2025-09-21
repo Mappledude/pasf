@@ -906,6 +906,13 @@ export function watchLeaderboard(
         q,
         (snapshot) => {
           const entries = snapshot.docs.map(deserializeLeaderboardEntry);
+          if (FIREBASE_DEBUG) {
+            if (entries.length > 0) {
+              console.log(`[LEADERBOARD] loaded count=${entries.length}`);
+            } else {
+              console.log("[LEADERBOARD] empty");
+            }
+          }
           cb(entries);
         },
         (error) => {

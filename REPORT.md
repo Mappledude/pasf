@@ -87,6 +87,9 @@ This report enumerates the gaps between the current lobby scaffold and the "From
   3. Add an event bus (lightweight emitter in `src/game/core/Events.ts`) for KO, combo, and timer events so UI elements react without polling Firestore.
 
 ## I. Leaderboard, Progression, and Rewards
+- **Updates**
+  - Patched Firestore security rules so `/leaderboard/*` mirrors the anonymous-read policy used by other player-facing docs.
+  - Arena leaderboard widget now treats empty snapshots as a valid state instead of surfacing the generic load failure banner.
 - **Missing components / files**
   - `src/firebase.ts` exposes `upsertLeaderboardEntry` but there is no match completion hook to call it.
   - No UI surface for the leaderboard within `src/pages/HomePage.tsx` or a dedicated `/leaderboard` route.

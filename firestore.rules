@@ -46,6 +46,11 @@ service cloud.firestore {
       allow read, write: if isSignedIn();
     }
 
+    // Leaderboard (existing)
+    match /leaderboard/{entry} {
+      allow read: if isSignedIn();
+    }
+
     // Meta (existing)
     match /meta/{doc} {
       allow read: if true;
