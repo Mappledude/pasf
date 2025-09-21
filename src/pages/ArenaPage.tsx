@@ -64,12 +64,7 @@ export default function ArenaPage() {
     error: presenceError,
   } = useArenaPresence(arenaId);
 
-  const rosterEntries = usePresenceRoster(presence);
-  const rosterNames = useMemo(
-    () => rosterEntries.map((entry) => entry.name),
-    [rosterEntries],
-  );
-  const rosterCount = rosterEntries.length;
+  const { names: rosterNames, count: rosterCount } = usePresenceRoster(arenaId);
 
   // Optional: formatted chip string for UI
   const formattedRosterNames = useMemo(() => {
