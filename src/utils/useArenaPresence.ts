@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { doc, getDoc, type FirestoreError, type Unsubscribe } from "firebase/firestore";
 import { ensureAnonAuth, watchArenaPresence, db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
@@ -193,3 +193,24 @@ export function useArenaPresence(arenaId?: string): UseArenaPresenceResult {
 
   return { players, loading, error };
 }
+
+export const usePresenceRoster = (arenaId?: string) => {
+  const { players } = useArenaPresence(arenaId);
+
+  return useMemo(() => {
+    const names: string[] = [];
+
+    for (const entry of players) {
+      const displayName =
+        typeof entry.displayName === "string" ? entry.displayName.trim() : "";
+      if (displayName.length > 0) {
+        names.push(displayName);
+      }
+      if (names.length >= 3) {
+        break;
+      }
+    }
+
+    return { names, count: players.length };
+  }, [players]);
+};
