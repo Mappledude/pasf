@@ -23,62 +23,66 @@ export interface ArenaPeerOptions {
 }
 
 export interface ArenaHostService {
+  /** Queue partial local state; debounced to HOST_WRITE_INTERVAL_MS. */
   setLocalState(partial: Partial<ArenaPlayerState>): void;
+  /** Host-side damage application (authoritative). */
   applyDamage(targetPlayerId: string, amount: number): Promise<void>;
+  /** Host-side respawn for the local player. */
   respawn(spawn: { x: number; y: number }): Promise<void>;
+  /** Stop timers and release resources. */
   destroy(): void;
 }
 
 export interface ArenaPeerService {
+  /** Subscribe to authoritative arena snapshots. */
   subscribe(cb: (state: ArenaStateSnapshot | undefined) => void): () => void;
+  /** Release listeners/resources. */
   destroy(): void;
 }
 
+/** Target ~11 Hz authoritative writes from host. */
 export const HOST_WRITE_INTERVAL_MS = 90;
 
 const encoder = new TextEncoder();
 
 type PlayerStatePartial = Partial<ArenaPlayerState>;
-
 type Listener = (state: ArenaStateSnapshot | undefined) => void;
 
 function shallowEqualState(a: PlayerStatePartial | null, b: PlayerStatePartial | null): boolean {
-  if (!a || !b) {
-    return false;
-  }
+  if (!a || !b) return false;
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   for (const key of keys) {
-    const ak = (a as Record<string, unknown>)[key];
-    const bk = (b as Record<string, unknown>)[key];
-    if (ak !== bk) {
+    if ((a as Record<string, unknown>)[key] !== (b as Record<string, unknown>)[key]) {
       return false;
     }
   }
   return true;
 }
 
+/**
+ * Host: batches local partial state and writes authoritative player node into
+ * /arenas/{id}/state/current (via updateArenaPlayerState).
+ */
 export function createArenaHostService(options: ArenaHostOptions): ArenaHostService {
   const { arenaId, meId } = options;
+
   let destroyed = false;
   let queued: PlayerStatePartial | null = null;
   let lastSent: PlayerStatePartial | null = null;
   let tick = 0;
 
   const timer = setInterval(() => {
-    if (destroyed || !queued) {
-      return;
-    }
+    if (destroyed || !queued) return;
 
     const next = queued;
     queued = null;
 
-    if (shallowEqualState(lastSent, next)) {
-      return;
-    }
+    if (shallowEqualState(lastSent, next)) return;
 
     lastSent = { ...next };
     tick += 1;
 
+    // Lightweight telemetry on payload size
     const snapshot = { tick, players: { [meId]: next } };
     const bytes = encoder.encode(JSON.stringify(snapshot)).length;
     debugLog("[HOST] tick=%d wrote state (bytes=%d)", tick, bytes);
@@ -90,9 +94,7 @@ export function createArenaHostService(options: ArenaHostOptions): ArenaHostServ
 
   return {
     setLocalState(partial) {
-      if (destroyed) {
-        return;
-      }
+      if (destroyed) return;
       queued = { ...(queued ?? {}), ...partial };
     },
     applyDamage(targetPlayerId, amount) {
@@ -102,9 +104,7 @@ export function createArenaHostService(options: ArenaHostOptions): ArenaHostServ
       return respawnPlayer(arenaId, meId, spawn);
     },
     destroy() {
-      if (destroyed) {
-        return;
-      }
+      if (destroyed) return;
       destroyed = true;
       clearInterval(timer);
       queued = null;
@@ -113,20 +113,20 @@ export function createArenaHostService(options: ArenaHostOptions): ArenaHostServ
   };
 }
 
+/**
+ * Peer: subscribes to authoritative arena snapshot document and fans out to listeners.
+ */
 export function createArenaPeerService(options: ArenaPeerOptions): ArenaPeerService {
   const { arenaId } = options;
+
   const listeners = new Set<Listener>();
   let unsubscribe: (() => void) | null = null;
   let destroyed = false;
 
   const ensureSubscription = () => {
-    if (destroyed || unsubscribe) {
-      return;
-    }
+    if (destroyed || unsubscribe) return;
     unsubscribe = watchArenaState(arenaId, (state) => {
-      if (destroyed) {
-        return;
-      }
+      if (destroyed) return;
       const snapshot = state as ArenaStateSnapshot | undefined;
       listeners.forEach((listener) => {
         try {
@@ -140,9 +140,7 @@ export function createArenaPeerService(options: ArenaPeerOptions): ArenaPeerServ
 
   return {
     subscribe(cb) {
-      if (destroyed) {
-        return () => undefined;
-      }
+      if (destroyed) return () => undefined;
       listeners.add(cb);
       ensureSubscription();
       return () => {
@@ -154,9 +152,7 @@ export function createArenaPeerService(options: ArenaPeerOptions): ArenaPeerServ
       };
     },
     destroy() {
-      if (destroyed) {
-        return;
-      }
+      if (destroyed) return;
       destroyed = true;
       if (unsubscribe) {
         unsubscribe();

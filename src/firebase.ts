@@ -22,6 +22,7 @@ import {
   orderBy,
   onSnapshot,
   runTransaction,
+  type QueryDocumentSnapshot,
   type Unsubscribe,
 } from "firebase/firestore";
 
@@ -160,6 +161,33 @@ export type ArenaPlayerState = {
   anim?: string;
   hp: number;
 };
+
+export interface ArenaInputSnapshot {
+  playerId: string;
+  codename?: string;
+  left?: boolean;
+  right?: boolean;
+  jump?: boolean;
+  attack?: boolean;
+  updatedAt?: ISODate;
+}
+
+export interface ArenaStateWritePlayer {
+  codename?: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  facing: "L" | "R";
+  hp: number;
+  anim?: string;
+}
+
+export interface ArenaStateWrite {
+  tick: number;
+  tMs: number;
+  players: Record<string, ArenaStateWritePlayer>;
+}
 
 export interface LeaderboardEntry {
   id: string;
@@ -393,6 +421,33 @@ export const watchArenaPresence = (
 const arenaStateDoc = (arenaId: string) =>
   doc(db, "arenas", arenaId, "state", "current");
 
+const arenaInputDoc = (arenaId: string, playerId: string) =>
+  doc(db, "arenas", arenaId, "inputs", playerId);
+
+const arenaInputsCollection = (arenaId: string) =>
+  collection(db, "arenas", arenaId, "inputs");
+
+const readTimestamp = (value: unknown): ISODate | undefined => {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const date = (value as { toDate?: () => Date }).toDate?.();
+  return date?.toISOString();
+};
+
+const serializeInputSnapshot = (snap: QueryDocumentSnapshot): ArenaInputSnapshot => {
+  const data = snap.data() as Record<string, unknown>;
+  return {
+    playerId: (data.playerId as string) ?? snap.id,
+    codename: (data.codename as string) ?? undefined,
+    left: typeof data.left === "boolean" ? data.left : undefined,
+    right: typeof data.right === "boolean" ? data.right : undefined,
+    jump: typeof data.jump === "boolean" ? data.jump : undefined,
+    attack: typeof data.attack === "boolean" ? data.attack : undefined,
+    updatedAt: readTimestamp(data.updatedAt),
+  };
+};
+
 export async function initArenaPlayerState(
   arenaId: string,
   me: { id: string; codename: string },
@@ -474,6 +529,71 @@ export function watchArenaState(arenaId: string, cb: (state: any) => void) {
       unsubscribe = null;
     }
   };
+}
+
+export interface ArenaInputWrite {
+  left?: boolean;
+  right?: boolean;
+  jump?: boolean;
+  attack?: boolean;
+  codename?: string;
+}
+
+export async function writeArenaInput(
+  arenaId: string,
+  playerId: string,
+  input: ArenaInputWrite,
+): Promise<void> {
+  await ensureAnonAuth();
+  const ref = arenaInputDoc(arenaId, playerId);
+  const payload: Record<string, unknown> = {
+    playerId,
+    updatedAt: serverTimestamp(),
+  };
+  if (typeof input.left === "boolean") payload.left = input.left;
+  if (typeof input.right === "boolean") payload.right = input.right;
+  if (typeof input.jump === "boolean") payload.jump = input.jump;
+  if (typeof input.attack === "boolean") payload.attack = input.attack;
+  if (input.codename) payload.codename = input.codename;
+  await setDoc(ref, payload, { merge: true });
+}
+
+export async function fetchArenaInputs(arenaId: string): Promise<ArenaInputSnapshot[]> {
+  await ensureAnonAuth();
+  const snapshot = await getDocs(arenaInputsCollection(arenaId));
+  return snapshot.docs.map(serializeInputSnapshot);
+}
+
+export function watchArenaInputs(
+  arenaId: string,
+  cb: (inputs: ArenaInputSnapshot[]) => void,
+): Unsubscribe {
+  const q = query(arenaInputsCollection(arenaId));
+  return onSnapshot(q, (snapshot) => {
+    cb(snapshot.docs.map(serializeInputSnapshot));
+  });
+}
+
+export async function writeArenaState(arenaId: string, state: ArenaStateWrite): Promise<void> {
+  await ensureAnonAuth();
+  const ref = arenaStateDoc(arenaId);
+  const players: Record<string, Record<string, unknown>> = {};
+  for (const [playerId, data] of Object.entries(state.players)) {
+    players[playerId] = {
+      ...data,
+      updatedAt: serverTimestamp(),
+    };
+  }
+  await setDoc(
+    ref,
+    {
+      tick: state.tick,
+      tMs: state.tMs,
+      players,
+      lastUpdate: serverTimestamp(),
+    },
+    { merge: true },
+  );
 }
 
 export async function applyDamage(arenaId: string, targetPlayerId: string, amount: number) {
