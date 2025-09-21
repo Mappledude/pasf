@@ -170,6 +170,10 @@ hr {
   overflow: hidden;
 }
 
+.canvas-frame {
+  position: relative;
+}
+
 .card-canvas > .canvas-frame {
   border-radius: var(--radius);
   overflow: hidden;
@@ -350,6 +354,123 @@ textarea:focus {
   height: 1rem;
   border-radius: 6px;
   animation: pulse 1.4s infinite ease-in-out;
+}
+
+/* Touch controls overlay */
+.touch-controls {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 16px;
+  gap: 16px;
+  pointer-events: none;
+  --touch-button-size: clamp(54px, 13vw, 88px);
+  --touch-attack-size: clamp(64px, 16vw, 104px);
+}
+
+.touch-controls__group {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  pointer-events: auto;
+}
+
+.touch-controls__attack-group {
+  flex-direction: column;
+  align-items: center;
+}
+
+.touch-controls__dpad {
+  display: grid;
+  grid-template-columns: repeat(3, var(--touch-button-size));
+  grid-template-rows: repeat(3, var(--touch-button-size));
+  gap: 12px;
+  justify-items: center;
+  align-items: center;
+}
+
+.touch-controls__dpad > span {
+  width: var(--touch-button-size);
+  height: var(--touch-button-size);
+}
+
+.touch-controls__button {
+  width: var(--touch-button-size);
+  height: var(--touch-button-size);
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(15, 23, 42, 0.6);
+  color: #f8fafc;
+  font-size: clamp(16px, 4vw, 22px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  pointer-events: auto;
+  backdrop-filter: blur(8px);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.touch-controls__button--attack {
+  width: var(--touch-attack-size);
+  height: var(--touch-attack-size);
+  font-size: clamp(18px, 5vw, 26px);
+}
+
+.touch-controls__button--active {
+  background: rgba(59, 130, 246, 0.82);
+  border-color: rgba(59, 130, 246, 0.95);
+  transform: scale(0.96);
+}
+
+.touch-controls--portrait {
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+}
+
+.touch-controls--portrait .touch-controls__group {
+  justify-content: center;
+}
+
+.touch-controls--portrait .touch-controls__attack-group {
+  flex-direction: row;
+  justify-content: center;
+}
+
+.touch-controls--landscape {
+  flex-direction: row;
+}
+
+.touch-controls--landscape .touch-controls__group:first-of-type {
+  justify-content: flex-start;
+}
+
+.touch-controls--landscape .touch-controls__attack-group {
+  justify-content: flex-end;
+}
+
+@media (max-width: 720px) {
+  .touch-controls {
+    padding: 12px;
+    gap: 12px;
+    --touch-button-size: clamp(48px, 18vw, 76px);
+    --touch-attack-size: clamp(56px, 22vw, 92px);
+  }
+
+  .touch-controls__group {
+    gap: 12px;
+  }
+}
+
+@media (min-width: 1200px) {
+  .touch-controls {
+    --touch-button-size: 80px;
+    --touch-attack-size: 98px;
+  }
 }
 
 @keyframes pulse {

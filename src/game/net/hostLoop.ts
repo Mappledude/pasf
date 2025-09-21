@@ -1,6 +1,7 @@
 import {
   fetchArenaInputs,
   writeArenaState,
+  recordLeaderboardWin,
   type ArenaInputSnapshot,
   type ArenaStateWrite,
 } from "../../firebase";
@@ -21,6 +22,7 @@ export interface HostLoopController {
 
 const DEFAULT_TICK_RATE = 11;
 const MAX_DT_MS = 250;
+const LEADERBOARD_DEBUG = import.meta.env?.VITE_DEBUG_FIREBASE === "true" || import.meta.env?.DEV;
 
 function buildActions(
   arenaId: string,
@@ -104,12 +106,14 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
   let playerOrder: string[] = [];
   let lastStepAt = Date.now();
   const seqByPlayer = new Map<string, number>();
+  const previousHp = new Map<string, number>();
 
   const resetSim = (participants: ArenaInputSnapshot[]) => {
     if (participants.length < 2) {
       sim = null;
       playerOrder = [];
       seqByPlayer.clear();
+      previousHp.clear();
       return;
     }
     const [a, b] = participants;
@@ -120,8 +124,44 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
     });
     playerOrder = [a.playerId, b.playerId];
     seqByPlayer.clear();
+    previousHp.clear();
     lastStepAt = Date.now();
     logger.info?.("[hostLoop] sim reset", { arenaId: options.arenaId, players: playerOrder });
+  };
+
+  const detectKoTransition = (
+    snapshot: ReturnType<typeof getSnapshot>,
+    participants: ArenaInputSnapshot[],
+  ) => {
+    if (participants.length < 2) {
+      previousHp.clear();
+      return;
+    }
+
+    const players = snapshot.players ?? {};
+    for (const [playerId, state] of Object.entries(players)) {
+      const hp = typeof state.hp === "number" ? state.hp : 100;
+      const prev = previousHp.get(playerId);
+
+      if (typeof prev === "number" && prev > 0 && hp <= 0) {
+        const winner = participants.find((p) => p.playerId !== playerId);
+        if (winner) {
+          void recordLeaderboardWin({ playerId: winner.playerId, codename: winner.codename }).catch((error) => {
+            if (LEADERBOARD_DEBUG) {
+              logger.error?.("[hostLoop] recordLeaderboardWin failed", error);
+            }
+          });
+        }
+      }
+
+      previousHp.set(playerId, hp);
+    }
+
+    for (const key of [...previousHp.keys()]) {
+      if (!(key in players)) {
+        previousHp.delete(key);
+      }
+    }
   };
 
   const step = async () => {
@@ -155,6 +195,7 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
       const actions = buildActions(options.arenaId, participants, seqByPlayer, now);
       applyActions(sim, actions, dtMs);
       const snapshot = getSnapshot(sim);
+      detectKoTransition(snapshot, participants);
       const stateWrite = makeStateWrite(participants, snapshot);
       await writeArenaState(options.arenaId, stateWrite);
     } catch (error) {
