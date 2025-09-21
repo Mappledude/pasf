@@ -7,10 +7,14 @@ import {
   leaveArena,
   claimArenaSeat,
   releaseArenaSeat,
+import {
   initArenaPlayerState,
   watchLeaderboard,
   type LeaderboardEntry,
 } from "../firebase";
+
+import { debugLog, debugWarn } from "../net/debug";
+
 import {
   ensureArenaState,
   watchArenaState,
@@ -20,9 +24,16 @@ import {
 import { useArenaPresence } from "../utils/useArenaPresence";
 import { useArenaSeats } from "../utils/useArenaSeats";
 import { useAuth } from "../context/AuthContext";
-import { makeGame } from "../game/phaserGame";
-import ArenaScene, { type ArenaSceneConfig } from "../game/arena/ArenaScene";
 import TouchControls from "../game/input/TouchControls";
+import { useArenaRuntime } from "../utils/useArenaRuntime";
+import { ARENA_NET_DEBUG, debugLog } from "../net/debug";
+
+const debugWarn = (...args: unknown[]) => {
+  if (!ARENA_NET_DEBUG) {
+    return;
+  }
+  console.warn(...args);
+};
 
 
 export default function ArenaPage() {
@@ -32,13 +43,10 @@ export default function ArenaPage() {
   const [err, setErr] = useState<string | null>(null);
   const [state, setState] = useState<ArenaState | undefined>(undefined);
   const canvasRef = useRef<HTMLDivElement | null>(null);
-const gameRef = useRef<Phaser.Game | null>(null);
-const [gameBooted, setGameBooted] = useState(false);
-
-const [touchControlsEnabled, setTouchControlsEnabled] = useState(false);
-const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-const [leaderboardLoading, setLeaderboardLoading] = useState(true);
-const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
+  const [touchControlsEnabled, setTouchControlsEnabled] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(true);
+  const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
 
 
   const { players: presence, loading: presenceLoading, error: presenceError } = useArenaPresence(arenaId);
@@ -357,68 +365,6 @@ const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
       setSeatBusy(null);
     }
   };
-
-  useEffect(() => {
-    if (!isHost || !arenaId || !meUid || !canvasRef.current) {
-      if (gameRef.current) {
-        console.info("[ARENA] tearing down Phaser host", { arenaId });
-        gameRef.current.destroy(true);
-        gameRef.current = null;
-      }
-      setGameBooted(false);
-      return;
-    }
-
-    const codename = player?.codename ?? meUid.slice(0, 6);
-    const spawn = { x: 240, y: 360 };
-    const canvasEl = canvasRef.current;
-    if (!canvasEl) return;
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        await initArenaPlayerState(arenaId, { id: meUid, codename }, spawn);
-        if (cancelled) return;
-        const config: Phaser.Types.Core.GameConfig = {
-          type: Phaser.AUTO,
-          width: 960,
-          height: 540,
-          parent: canvasEl,
-          backgroundColor: "#0f1115",
-          physics: { default: "arcade", arcade: { gravity: { x: 0, y: 900 }, debug: false } },
-          scene: [],
-        };
-        const game = makeGame(config);
-        game.scene.add(
-          "Arena",
-          ArenaScene,
-          true,
-          {
-            arenaId,
-            me: { id: meUid, codename },
-            spawn,
-          } as ArenaSceneConfig
-        );
-        gameRef.current = game;
-        setGameBooted(true);
-      } catch (err) {
-        if (cancelled) return;
-        console.error("[ARENA] failed to boot Phaser host", err);
-        setSeatMessage((prev) => prev ?? "Failed to start local host session.");
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (gameRef.current) {
-        console.info("[ARENA] destroying Phaser host", { arenaId });
-        gameRef.current.destroy(true);
-        gameRef.current = null;
-      }
-      setGameBooted(false);
-    };
-  }, [arenaId, isHost, meUid, player?.codename]);
 
   useEffect(() => {
 
