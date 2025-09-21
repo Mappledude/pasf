@@ -66,6 +66,9 @@ This report enumerates the gaps between the current lobby scaffold and the "From
   4. Add unit tests in `src/sim/__tests__/` covering KO, respawn, and rollback recovery to guard deterministic behavior.
 
 ## G. Seats, Controls, and Input Abstraction
+- **Updates**
+  - Legacy seat gating kept the arena host loop tied to `/seats` documents, so presence-only clients never promoted a host when those docs were absent.
+  - Seatless auto-join now hides the seat UI, promotes the earliest presence entry to host, and boots the Phaser session as soon as auth and arena state resolve.
 - **Missing components / files**
   - Input binding lives in `src/game/input/keys.ts` and is tailored for the training sandbox, not match seats.
   - No concept of seat slots (e.g., `seatA`, `seatB`) to map devices to players.

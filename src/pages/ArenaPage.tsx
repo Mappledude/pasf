@@ -6,9 +6,6 @@ import {
   ensureAnonAuth,
   joinArena,
   leaveArena,
-  claimArenaSeat,
-  releaseArenaSeat,
-  initArenaPlayerState,
   watchLeaderboard,
 } from "../firebase";
 import type { LeaderboardEntry } from "../firebase";
@@ -23,7 +20,6 @@ import {
 import type { ArenaState } from "../lib/arenaState";
 
 import { useArenaPresence } from "../utils/useArenaPresence";
-import { useArenaSeats } from "../utils/useArenaSeats";
 import { useAuth } from "../context/AuthContext";
 import TouchControls from "../game/input/TouchControls";
 import { useArenaRuntime } from "../utils/useArenaRuntime";
@@ -46,15 +42,15 @@ export default function ArenaPage() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(true);
   const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
+  const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
 
 
   const { players: presence, loading: presenceLoading, error: presenceError } = useArenaPresence(arenaId);
-  const { seats, loading: seatsLoading, error: seatsError } = useArenaSeats(arenaId);
   const { user, player, authReady } = useAuth();
-  const [seatBusy, setSeatBusy] = useState<number | null>(null);
-  const [seatMessage, setSeatMessage] = useState<string | null>(null);
 
-  type SeatEntry = (typeof seats)[number];
+  useEffect(() => {
+    debugLog("[UI] seats/host hidden (seatless mode)");
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -258,122 +254,47 @@ export default function ArenaPage() {
     return agents;
   }, [agents, presence]);
 
-  const seatMap = useMemo(() => {
-    const map = new Map<number, SeatEntry>();
-    seats.forEach((seat) => {
-      map.set(seat.seatNo, seat);
-    });
-    return map;
-  }, [seats]);
-
   const meUid = user?.uid ?? null;
-  const meProfileId = player?.id ?? null;
 
-  const isSeatMine = (seat?: SeatEntry) => {
-    if (!seat || !meUid) return false;
-    if (seat.uid === meUid) return true;
-    if (meProfileId && (seat.profileId === meProfileId || seat.playerId === meProfileId))
-      return true;
-    if (!seat.playerId && seat.uid === meUid) return true;
-    return false;
-  };
+  const hostEntry = useMemo(() => {
+    if (!presence.length) return null;
+    const parseTs = (value?: string) => {
+      if (!value) return Number.POSITIVE_INFINITY;
+      const parsed = Date.parse(value);
+      return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+    };
+    return [...presence].sort((a, b) => {
+      const aTs = parseTs(a.joinedAt);
+      const bTs = parseTs(b.joinedAt);
+      if (aTs !== bTs) return aTs - bTs;
+      const aKey = a.playerId ?? a.authUid ?? "";
+      const bKey = b.playerId ?? b.authUid ?? "";
+      return aKey.localeCompare(bKey);
+    })[0];
+  }, [presence]);
 
-  const resolveSeatName = (seat?: SeatEntry) => {
-    if (!seat) return "Empty";
-    const match = presence.find((entry) => {
-      if (seat.profileId && entry.profileId && entry.profileId === seat.profileId) {
-        return true;
-      }
-      if (seat.playerId && entry.profileId && entry.profileId === seat.playerId) {
-        return true;
-      }
-      if (seat.profileId && entry.playerId === seat.profileId) {
-        return true;
-      }
-      return entry.playerId === seat.uid || entry.authUid === seat.uid;
-    });
-    const base =
-      match?.codename ??
-      seat.codename ??
-      seat.displayName ??
-      seat.profileId ??
-      seat.playerId ??
-      seat.uid;
-    return base || "Agent";
-  };
-
-  const hostSeat = seatMap.get(0);
-  const remoteSeat = seatMap.get(1);
-  const isHost = !!hostSeat && isSeatMine(hostSeat);
-
-  const hostLabel = hostSeat ? `${resolveSeatName(hostSeat)}${isSeatMine(hostSeat) ? " (you)" : ""}` : "open";
-  const remoteLabel = remoteSeat
-    ? `${resolveSeatName(remoteSeat)}${isSeatMine(remoteSeat) ? " (you)" : ""}`
-    : "open";
+  const hostLabel = hostEntry
+    ? `${hostEntry.codename ?? hostEntry.playerId.slice(0, 6)}${
+        hostEntry.authUid && hostEntry.authUid === meUid ? " (you)" : ""
+      }`
+    : "—";
 
   const { gameBooted } = useArenaRuntime({
     arenaId,
     authReady,
     stateReady,
-    isHost,
     meUid,
     codename: player?.codename ?? null,
+    presence,
     canvasRef,
-    onBootError: (message) => setSeatMessage((prev) => prev ?? message),
+    onBootError: (message) => setRuntimeMessage((prev) => prev ?? message),
   });
 
   const debugFooter = useMemo(() => {
     const tick = state?.tick ?? 0;
     const playersCount = chipNames.length;
-    return `tick=${tick} · agents=${playersCount} · host=${hostLabel} · p2=${remoteLabel} · ready=${stateReady}`;
-  }, [chipNames.length, hostLabel, remoteLabel, state?.tick, stateReady]);
-
-  const handleJoinSeat = async (seatNo: number) => {
-    if (!arenaId || !meUid) return;
-    setSeatBusy(seatNo);
-    setSeatMessage(null);
-    try {
-      await claimArenaSeat(arenaId, seatNo, {
-        uid: meUid,
-        playerId: meProfileId,
-        profileId: meProfileId,
-        codename: player?.codename ?? meUid.slice(0, 6),
-      });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Failed to join seat.";
-      setSeatMessage(message);
-    } finally {
-      setSeatBusy(null);
-    }
-  };
-
-  const handleLeaveSeat = async (seatNo: number) => {
-    if (!arenaId || !meUid) return;
-    setSeatBusy(seatNo);
-    setSeatMessage(null);
-    try {
-      await releaseArenaSeat(arenaId, seatNo, {
-        uid: meUid,
-        playerId: meProfileId,
-        profileId: meProfileId,
-      });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Failed to leave seat.";
-      setSeatMessage(message);
-    } finally {
-      setSeatBusy(null);
-    }
-  };
-
-  useEffect(() => {
-
-    if (!arenaId || !meUid) return;
-    const identity = { uid: meUid, playerId: meProfileId };
-    return () => {
-      releaseArenaSeat(arenaId, 0, identity).catch((err) => debugWarn("[ARENA] release seat0 failed", err));
-      releaseArenaSeat(arenaId, 1, identity).catch((err) => debugWarn("[ARENA] release seat1 failed", err));
-    };
-  }, [arenaId, meProfileId, meUid]);
+    return `tick=${tick} · agents=${playersCount} · host=${hostLabel} · ready=${stateReady}`;
+  }, [chipNames.length, hostLabel, state?.tick, stateReady]);
 
   return (
     <div className="grid" style={{ gap: 24 }}>
@@ -478,59 +399,8 @@ export default function ArenaPage() {
       </section>
 
       <section className="card card-canvas">
-        <div className="grid" style={{ gap: 12, marginBottom: 12 }}>
-          {[0, 1].map((seatNo) => {
-            const seat = seatMap.get(seatNo);
-            const mine = isSeatMine(seat);
-            const label = seatNo === 0 ? "Player 1 (Host)" : "Player 2";
-            const occupied = !!seat;
-            const name = resolveSeatName(seat);
-            const disabled = seatBusy !== null || !meUid || (occupied && !mine) || seatsLoading;
-            return (
-              <div key={seatNo} className="card" style={{ margin: 0, padding: 12 }}>
-                <div className="muted mono" style={{ marginBottom: 4 }}>{label}</div>
-                <div style={{ fontFamily: "var(--font-mono)", marginBottom: 12 }}>
-                  {occupied ? (
-                    <>
-                      {name}
-                      {mine ? " (you)" : ""}
-                    </>
-                  ) : (
-                    <span className="muted">Open seat</span>
-                  )}
-                </div>
-                <div className="button-row">
-                  {mine ? (
-                    <button
-                      type="button"
-                      className="button ghost"
-                      onClick={() => handleLeaveSeat(seatNo)}
-                      disabled={seatBusy === seatNo}
-                    >
-                      {seatBusy === seatNo ? "Leaving…" : "Leave seat"}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="button"
-                      onClick={() => handleJoinSeat(seatNo)}
-                      disabled={disabled}
-                    >
-                      {seatBusy === seatNo ? "Joining…" : `Join P${seatNo + 1}`}
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        {seatMessage ? (
-          <div className="error" style={{ marginBottom: 12 }}>{seatMessage}</div>
-        ) : null}
-        {seatsError ? (
-          <div className="error" style={{ marginBottom: 12 }}>
-            Failed to load seat assignments.
-          </div>
+        {runtimeMessage ? (
+          <div className="error" style={{ marginBottom: 12 }}>{runtimeMessage}</div>
         ) : null}
         <div
           ref={canvasRef}
