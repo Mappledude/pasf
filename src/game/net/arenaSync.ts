@@ -30,6 +30,7 @@ export type ArenaStateSnapshot = {
   phase?: ArenaPhase;
   players?: Record<string, ArenaPlayerFrame | undefined>;
   lastEvent?: ArenaLastEvent;
+  writerUid?: string;
 };
 
 export interface ArenaHostOptions {
@@ -146,7 +147,7 @@ export function createArenaPeerService(options: ArenaPeerOptions): ArenaPeerServ
     if (destroyed || unsubscribe) return;
     unsubscribe = watchArenaState(arenaId, (state) => {
       if (destroyed) return;
-      const snapshot = state as ArenaStateSnapshot | undefined;
+      const snapshot = mapAuthoritativeState(state);
       listeners.forEach((listener) => {
         try {
           listener(snapshot);
@@ -179,5 +180,39 @@ export function createArenaPeerService(options: ArenaPeerOptions): ArenaPeerServ
       }
       listeners.clear();
     },
+  };
+}
+
+function mapAuthoritativeState(state: unknown): ArenaStateSnapshot | undefined {
+  if (!state || typeof state !== "object") {
+    return undefined;
+  }
+  const raw = state as Record<string, unknown>;
+  const entitiesRaw = raw.entities;
+  const players: Record<string, ArenaPlayerFrame> = {};
+  if (entitiesRaw && typeof entitiesRaw === "object") {
+    for (const [uid, value] of Object.entries(entitiesRaw as Record<string, any>)) {
+      if (!value || typeof value !== "object") continue;
+      const x = typeof value.x === "number" ? value.x : undefined;
+      const y = typeof value.y === "number" ? value.y : undefined;
+      const vx = typeof value.vx === "number" ? value.vx : undefined;
+      const vy = typeof value.vy === "number" ? value.vy : undefined;
+      const facing = value.facing === "L" || value.facing === "R" ? value.facing : undefined;
+      const hp = typeof value.hp === "number" ? value.hp : undefined;
+      const name = typeof value.name === "string" ? value.name : undefined;
+      players[uid] = {
+        codename: name,
+        pos: x !== undefined && y !== undefined ? { x, y } : undefined,
+        vel: vx !== undefined && vy !== undefined ? { x: vx, y: vy } : undefined,
+        dir: facing === "L" ? -1 : facing === "R" ? 1 : undefined,
+        hp,
+      };
+    }
+  }
+
+  return {
+    tick: typeof raw.tick === "number" ? raw.tick : undefined,
+    players: Object.keys(players).length > 0 ? players : undefined,
+    writerUid: typeof raw.writerUid === "string" ? raw.writerUid : undefined,
   };
 }

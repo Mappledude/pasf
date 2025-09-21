@@ -13,8 +13,9 @@ import { ensureAnonAuth } from "../firebase";
 
 export type ArenaState = {
   tick: number;
+  writerUid?: string | null;
   lastUpdate?: unknown; // Firestore Timestamp
-  players: Record<string, { hp: number; updatedAt?: unknown }>;
+  entities?: Record<string, { hp?: number; updatedAt?: unknown; x?: number; y?: number }>;
 };
 
 export const arenaStateRef = (db: Firestore, arenaId: string): DocumentReference =>
@@ -32,7 +33,7 @@ export async function ensureArenaState(
     console.info("[ARENA] ensureArenaState: creating doc", { arenaId });
     await setDoc(
       ref,
-      { tick: 0, players: {}, lastUpdate: serverTimestamp() } as ArenaState,
+      { tick: 0, writerUid: null, entities: {}, lastUpdate: serverTimestamp() } as ArenaState,
       { merge: true }
     );
   }
@@ -80,9 +81,6 @@ export async function touchPlayer(
     ref,
     {
       lastUpdate: serverTimestamp(),
-      players: {
-        [user.uid]: { hp: initHp, updatedAt: serverTimestamp() },
-      },
     },
     { merge: true }
   );

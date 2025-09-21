@@ -336,26 +336,16 @@ export default function ArenaPage() {
 
   const meUid = user?.uid ?? null;
 
-  const hostEntry = useMemo(() => {
-    if (!presence.length) return null;
-    const parseTs = (value?: string) => {
-      if (!value) return Number.POSITIVE_INFINITY;
-      const parsed = Date.parse(value);
-      return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
-    };
-    return [...presence].sort((a, b) => {
-      const aTs = parseTs(a.joinedAt);
-      const bTs = parseTs(b.joinedAt);
-      if (aTs !== bTs) return aTs - bTs;
-      const aKey = a.playerId ?? a.authUid ?? "";
-      const bKey = b.playerId ?? b.authUid ?? "";
-      return aKey.localeCompare(bKey);
-    })[0];
-  }, [presence]);
+  const writerUid = state?.writerUid ?? null;
 
-  const hostLabel = hostEntry
-    ? `${hostEntry.codename ?? hostEntry.playerId.slice(0, 6)}${
-        hostEntry.authUid && hostEntry.authUid === meUid ? " (you)" : ""
+  const writerEntry = useMemo(() => {
+    if (!writerUid) return null;
+    return presence.find((entry) => (entry.authUid ?? entry.playerId) === writerUid) ?? null;
+  }, [presence, writerUid]);
+
+  const hostLabel = writerEntry
+    ? `${writerEntry.codename ?? writerEntry.playerId.slice(0, 6)}${
+        writerEntry.authUid && writerEntry.authUid === meUid ? " (you)" : ""
       }`
     : "—";
 
@@ -366,6 +356,7 @@ export default function ArenaPage() {
     meUid,
     codename: player?.codename ?? null,
     presence,
+    writerUid,
     canvasRef,
     onBootError: (message) => setRuntimeMessage((prev) => prev ?? message),
   });

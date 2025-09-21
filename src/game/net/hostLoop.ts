@@ -1,18 +1,15 @@
 import {
-  fetchArenaInputs,
+  watchArenaInputs,
+  watchArenaPresence,
   writeArenaState,
-  recordLeaderboardWin,
   type ArenaInputSnapshot,
-  type ArenaStateWrite,
 } from "../../firebase";
-import { applyActions, getSnapshot, initSim } from "../../sim/reducer";
-import type { ActionDoc, Sim } from "../../sim/types";
+import type { ArenaPresenceEntry } from "../../types/models";
 
 export interface HostLoopOptions {
   arenaId: string;
-  hostId: string;
+  writerUid: string;
   tickRateHz?: number;
-  seed?: number;
   log?: typeof console;
 }
 
@@ -21,79 +18,47 @@ export interface HostLoopController {
 }
 
 const DEFAULT_TICK_RATE = 11;
-const MAX_DT_MS = 250;
-const LEADERBOARD_DEBUG = import.meta.env?.VITE_DEBUG_FIREBASE === "true" || import.meta.env?.DEV;
-const LIVE_INPUT_WINDOW_MS = 200;
+const ACTIVE_WINDOW_MS = 20_000;
+const MOVE_SPEED = 240; // px/s
+const GRAVITY = 1_200; // px/s^2
+const JUMP_VELOCITY = -420; // px/s (negative = upward)
+const FLOOR_Y = 540 - 40 - 60;
+const MIN_X = 60;
+const MAX_X = 900;
 
-function buildActions(
-  arenaId: string,
-  participants: ArenaInputSnapshot[],
-  seqByPlayer: Map<string, number>,
-  timestamp: number,
-): ActionDoc[] {
-  return participants.map((participant) => {
-    const nextSeq = (seqByPlayer.get(participant.playerId) ?? 0) + 1;
-    seqByPlayer.set(participant.playerId, nextSeq);
-    return {
-      arenaId,
-      playerId: participant.playerId,
-      seq: nextSeq,
-      input: {
-        left: !!participant.left,
-        right: !!participant.right,
-        jump: !!participant.jump,
-        attack: !!participant.attack,
-      },
-      clientTs: timestamp,
-    };
-  });
+interface FighterState {
+  uid: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  facing: "L" | "R";
+  hp: number;
+  name?: string;
+  lastSeenMs: number;
 }
 
-function makeStateWrite(
-  participants: ArenaInputSnapshot[],
-  snapshot: ReturnType<typeof getSnapshot>,
-): ArenaStateWrite {
-  const inputsById = new Map(participants.map((p) => [p.playerId, p]));
-  const players: ArenaStateWrite["players"] = {};
-  for (const [playerId, state] of Object.entries(snapshot.players)) {
-    const input = inputsById.get(playerId);
-    players[playerId] = {
-      codename: input?.codename,
-      x: state.pos.x,
-      y: state.pos.y,
-      vx: state.vel.x,
-      vy: state.vel.y,
-      facing: state.dir === -1 ? "L" : "R",
-      hp: state.hp,
-      anim: state.attackActiveUntil > snapshot.tMs ? "attack" : undefined,
-    };
-  }
-  return {
-    tick: snapshot.tick,
-    tMs: snapshot.tMs,
-    players,
-  };
+interface InputCommand {
+  left: boolean;
+  right: boolean;
+  jump: boolean;
+  attack: boolean;
+  codename?: string;
 }
 
-function selectParticipants(
-  inputs: ArenaInputSnapshot[],
-  hostId: string,
-): ArenaInputSnapshot[] {
-  if (!inputs.length) {
-    return [];
-  }
-  const byId = new Map(inputs.map((entry) => [entry.playerId, entry]));
-  const sortedIds = [...byId.keys()].sort();
-  if (byId.has(hostId)) {
-    const index = sortedIds.indexOf(hostId);
-    if (index > 0) {
-      sortedIds.splice(index, 1);
-      sortedIds.unshift(hostId);
-    }
-  }
-  const selected = sortedIds.slice(0, 2).map((id) => byId.get(id)).filter(Boolean) as ArenaInputSnapshot[];
-  return selected.length === 2 ? selected : [];
-}
+const DEFAULT_COMMAND: InputCommand = {
+  left: false,
+  right: false,
+  jump: false,
+  attack: false,
+};
+
+const SPAWN_POINTS = [
+  { x: 240, y: FLOOR_Y, facing: "R" as const },
+  { x: 720, y: FLOOR_Y, facing: "L" as const },
+  { x: 480, y: FLOOR_Y, facing: "R" as const },
+  { x: 120, y: FLOOR_Y, facing: "R" as const },
+];
 
 export function startHostLoop(options: HostLoopOptions): HostLoopController {
   const tickRate = options.tickRateHz ?? DEFAULT_TICK_RATE;
@@ -103,66 +68,88 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
   let stopped = false;
   let busy = false;
   let timer: ReturnType<typeof setInterval> | null = null;
-  let sim: Sim | null = null;
-  let playerOrder: string[] = [];
-  let lastStepAt = Date.now();
-  const seqByPlayer = new Map<string, number>();
-  const previousHp = new Map<string, number>();
+  let tick = 0;
+  let spawnCursor = 0;
+  const fighters = new Map<string, FighterState>();
+  const inputs = new Map<string, InputCommand>();
+  let presenceUnsub: (() => void) | null = null;
+  let inputsUnsub: (() => void) | null = null;
 
-  const resetSim = (participants: ArenaInputSnapshot[]) => {
-    if (participants.length < 2) {
-      sim = null;
-      playerOrder = [];
-      seqByPlayer.clear();
-      previousHp.clear();
-      return;
-    }
-    const [a, b] = participants;
-    sim = initSim({
-      seed: options.seed ?? 1,
-      myPlayerId: a.playerId,
-      opponentId: b.playerId,
-    });
-    playerOrder = [a.playerId, b.playerId];
-    seqByPlayer.clear();
-    previousHp.clear();
-    lastStepAt = Date.now();
-    logger.info?.("[hostLoop] sim reset", { arenaId: options.arenaId, players: playerOrder });
+  const nextSpawn = () => {
+    const point = SPAWN_POINTS[spawnCursor % SPAWN_POINTS.length];
+    spawnCursor += 1;
+    return { ...point };
   };
 
-  const detectKoTransition = (
-    snapshot: ReturnType<typeof getSnapshot>,
-    participants: ArenaInputSnapshot[],
-  ) => {
-    if (participants.length < 2) {
-      previousHp.clear();
-      return;
-    }
-
-    const players = snapshot.players ?? {};
-    for (const [playerId, state] of Object.entries(players)) {
-      const hp = typeof state.hp === "number" ? state.hp : 100;
-      const prev = previousHp.get(playerId);
-
-      if (typeof prev === "number" && prev > 0 && hp <= 0) {
-        const winner = participants.find((p) => p.playerId !== playerId);
-        if (winner) {
-          void recordLeaderboardWin({ playerId: winner.playerId, codename: winner.codename }).catch((error) => {
-            if (LEADERBOARD_DEBUG) {
-              logger.error?.("[hostLoop] recordLeaderboardWin failed", error);
-            }
-          });
-        }
+  const handlePresence = (entries: ArenaPresenceEntry[]) => {
+    if (stopped) return;
+    const now = Date.now();
+    const active = new Set<string>();
+    for (const entry of entries) {
+      const uid = entry.authUid ?? entry.playerId;
+      if (!uid) continue;
+      const lastSeenMs = entry.lastSeen ? Date.parse(entry.lastSeen) : NaN;
+      if (!Number.isFinite(lastSeenMs)) {
+        continue;
       }
-
-      previousHp.set(playerId, hp);
+      if (now - lastSeenMs > ACTIVE_WINDOW_MS) {
+        continue;
+      }
+      active.add(uid);
+      const existing = fighters.get(uid);
+      const name = entry.codename ?? entry.displayName ?? uid.slice(0, 6);
+      if (existing) {
+        existing.lastSeenMs = lastSeenMs;
+        existing.name = name;
+        continue;
+      }
+      const spawn = nextSpawn();
+      fighters.set(uid, {
+        uid,
+        x: spawn.x,
+        y: spawn.y,
+        vx: 0,
+        vy: 0,
+        facing: spawn.facing,
+        hp: 100,
+        name,
+        lastSeenMs,
+      });
+      logger.info?.(`[SPAWN] uid=${uid} name="${name}"`);
     }
 
-    for (const key of [...previousHp.keys()]) {
-      if (!(key in players)) {
-        previousHp.delete(key);
+    for (const [uid, fighter] of fighters) {
+      if (!active.has(uid)) {
+        fighters.delete(uid);
+        logger.info?.(`[DESPAWN] uid=${uid}`);
       }
     }
+  };
+
+  const handleInputs = (snapshots: ArenaInputSnapshot[]) => {
+    if (stopped) return;
+    const seen = new Set<string>();
+    for (const snapshot of snapshots) {
+      const uid = snapshot.playerId;
+      if (!uid) continue;
+      const command: InputCommand = {
+        left: !!snapshot.left,
+        right: !!snapshot.right,
+        jump: !!snapshot.jump,
+        attack: !!snapshot.attack,
+        codename: snapshot.codename,
+      };
+      inputs.set(uid, command);
+      seen.add(uid);
+    }
+    for (const key of [...inputs.keys()]) {
+      if (!seen.has(key)) {
+        inputs.set(key, DEFAULT_COMMAND);
+      }
+    }
+    logger.info?.(
+      `[INPUT] count=${snapshots.length} uids=${snapshots.map((snap) => snap.playerId).join(",")}`,
+    );
   };
 
   const step = async () => {
@@ -171,73 +158,71 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
     }
     busy = true;
     try {
-      const inputs = await fetchArenaInputs(options.arenaId);
-      const fetchNowMs = Date.now();
-      const liveInputs = inputs.filter((entry) => {
-        const updatedAtMs = entry.updatedAt ? Date.parse(entry.updatedAt) : NaN;
-        if (!Number.isFinite(updatedAtMs)) {
-          return false;
+      const dt = intervalMs / 1000;
+      for (const fighter of fighters.values()) {
+        const command = inputs.get(fighter.uid) ?? DEFAULT_COMMAND;
+        const horizontal = command.left === command.right ? 0 : command.left ? -1 : 1;
+        fighter.vx = horizontal * MOVE_SPEED;
+        fighter.x += fighter.vx * dt;
+        if (fighter.x < MIN_X) {
+          fighter.x = MIN_X;
+        } else if (fighter.x > MAX_X) {
+          fighter.x = MAX_X;
         }
-        return fetchNowMs - updatedAtMs <= LIVE_INPUT_WINDOW_MS;
-      });
-      const liveIds = new Set(liveInputs.map((entry) => entry.playerId));
-      const staleEntries = inputs
-        .filter((entry) => !liveIds.has(entry.playerId))
-        .map((entry) => {
-          const updatedAtMs = entry.updatedAt ? Date.parse(entry.updatedAt) : NaN;
-          return {
-            playerId: entry.playerId,
-            updatedAt: entry.updatedAt,
-            ageMs: Number.isFinite(updatedAtMs) ? fetchNowMs - updatedAtMs : null,
-          };
-        });
+        if (fighter.vx < 0) {
+          fighter.facing = "L";
+        } else if (fighter.vx > 0) {
+          fighter.facing = "R";
+        }
 
-      logger.debug?.("[hostLoop] live input filter", {
-        arenaId: options.arenaId,
-        total: inputs.length,
-        livePlayerIds: liveInputs.map((entry) => entry.playerId),
-        stale: staleEntries,
-      });
+        const onGround = Math.abs(fighter.y - FLOOR_Y) < 1 && fighter.vy === 0;
+        if (command.jump && onGround) {
+          fighter.vy = JUMP_VELOCITY;
+        }
+        fighter.vy += GRAVITY * dt;
+        fighter.y += fighter.vy * dt;
+        if (fighter.y >= FLOOR_Y) {
+          fighter.y = FLOOR_Y;
+          fighter.vy = 0;
+        }
 
-      const participants = selectParticipants(liveInputs, options.hostId);
-
-      logger.debug?.("[hostLoop] participant selection", {
-        arenaId: options.arenaId,
-        candidates: liveInputs.map((entry) => entry.playerId),
-        selected: participants.map((entry) => entry.playerId),
-      });
-      if (!participants.length) {
-        sim = null;
-        playerOrder = [];
-        seqByPlayer.clear();
-        return;
+        if (command.codename && command.codename !== fighter.name) {
+          fighter.name = command.codename;
+        }
       }
 
-      const currentOrder = participants.map((p) => p.playerId);
-      if (currentOrder.join("|") !== playerOrder.join("|")) {
-        resetSim(participants);
-      }
+      tick += 1;
 
-      if (!sim) {
-        return;
-      }
+      const snapshot = {
+        tick,
+        writerUid: options.writerUid,
+        entities: Object.fromEntries(
+          [...fighters.entries()].map(([uid, fighter]) => [
+            uid,
+            {
+              x: fighter.x,
+              y: fighter.y,
+              vx: fighter.vx,
+              vy: fighter.vy,
+              facing: fighter.facing,
+              hp: fighter.hp,
+              name: fighter.name,
+            },
+          ]),
+        ),
+      } satisfies Parameters<typeof writeArenaState>[1];
 
-      const now = Date.now();
-      const dtMs = Math.min(Math.max(now - lastStepAt, 0), MAX_DT_MS);
-      lastStepAt = now;
-
-      const actions = buildActions(options.arenaId, participants, seqByPlayer, now);
-      applyActions(sim, actions, dtMs);
-      const snapshot = getSnapshot(sim);
-      detectKoTransition(snapshot, participants);
-      const stateWrite = makeStateWrite(participants, snapshot);
-      await writeArenaState(options.arenaId, stateWrite);
+      await writeArenaState(options.arenaId, snapshot);
+      logger.info?.(`[STATE] tick=${tick} entities=${fighters.size}`);
     } catch (error) {
       logger.error?.("[hostLoop] step error", error);
     } finally {
       busy = false;
     }
   };
+
+  presenceUnsub = watchArenaPresence(options.arenaId, handlePresence);
+  inputsUnsub = watchArenaInputs(options.arenaId, handleInputs);
 
   timer = setInterval(() => {
     void step();
@@ -252,9 +237,16 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
         clearInterval(timer);
         timer = null;
       }
-      sim = null;
-      playerOrder = [];
-      seqByPlayer.clear();
+      fighters.clear();
+      inputs.clear();
+      if (presenceUnsub) {
+        presenceUnsub();
+        presenceUnsub = null;
+      }
+      if (inputsUnsub) {
+        inputsUnsub();
+        inputsUnsub = null;
+      }
       logger.info?.("[hostLoop] stopped", { arenaId: options.arenaId });
     },
   };
