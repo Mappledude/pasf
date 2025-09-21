@@ -238,6 +238,7 @@ const arenaTitle = arenaName ?? "Arena";
     const pushPresence = async () => {
       const nextDisplayName = await computeDisplayName();
       await joinArena(arenaId, uid, codename, profileId, nextDisplayName);
+      console.log(`[HEARTBEAT] lastSeen updated uid=${uid}`);
     };
 
     (async () => {
@@ -257,7 +258,7 @@ const arenaTitle = arenaName ?? "Arena";
           pushPresence().catch((e) => {
             debugWarn("[PRESENCE] heartbeat failed", e);
           });
-        }, 60000);
+        }, 10_000);
       } catch (e) {
         if (cancelled) return;
         console.error("[PRESENCE] join failed", e);

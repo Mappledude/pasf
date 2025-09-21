@@ -13,6 +13,10 @@ interface ArenaListItemProps {
 const ArenaListItem = ({ arena, onJoin }: ArenaListItemProps) => {
   const { players, loading: presenceLoading } = useArenaPresence(arena.id);
   const occupancy = players.length;
+  React.useEffect(() => {
+    if (presenceLoading) return;
+    console.log(`[LOBBY] arena=${arena.id} liveCount=${occupancy}`);
+  }, [arena.id, occupancy, presenceLoading]);
   const capacityLabel = useMemo(() => {
     if (presenceLoading) return null;
     if (arena.capacity) {

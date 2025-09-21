@@ -133,17 +133,24 @@ This report enumerates the gaps between the current lobby scaffold and the "From
   - Presence entries now store `displayName` and `arenaId`, and the client resolves and primes cached friendly names from the authenticated profile or the `players/{playerId}` document before joining.
   - UI chips consume the resolved `displayName` (or codename) only, ensuring presence renders readable names without UID fallbacks.
 
+## Presence TTL / Cleanup
+- **Change summary**
+  - Presence writes now stamp `lastSeen` with `serverTimestamp()` and set `expireAt` ~45 seconds in the future. Firestore TTL targets `expireAt` to garbage-collect orphaned presence docs when clients disconnect without hitting `leaveArena`.
+  - Arena and Lobby clients filter presence snapshots client-side when `now - lastSeen > 20s`, keeping UI occupancy counts aligned with TTL lag.
+- **Operational note**
+  - Configure Firestore TTL to track `expireAt` on the **presence collection group**: `/arenas/{arenaId}/presence/{presenceId}`. Existing unload handlers (`leaveArena` + `navigator.sendBeacon`) remain the fast path; TTL is the safety net.
+
 ### Manual verification
 1. Launch the client and navigate to any arena (e.g., `/arena/dev`).
-2. Ensure an authenticated profile has a `displayName` and join the arena; observe the Agents panel rendering that name immediately.
-3. From a second session without a profile `displayName`, join the same arena; the chip should fall back to `Player XX` (last two UID characters).
-4. Inspect the Firestore `arenas/{arenaId}/presence/{uid}` document and confirm `displayName` matches the chip for both sessions.
+2. Use a profile with `displayName` and join the arena; confirm the Agents panel renders that name immediately.
+3. From a second session **without** a profile `displayName`, join the same arena; the chip should fall back to `Player XX` (last two UID characters).
+4. In Firestore, open `arenas/{arenaId}/presence/{uid}` and confirm:
+   - `displayName` matches the chip,
+   - `lastSeen` updates every ~10s (heartbeat),
+   - `expireAt` is ~45s ahead of current time.
 
 ### Telemetry snippets
-```
-[PRESENCE] join name="Agent Zero" uid=profile_123 playerId=profile_123
-[PRESENCE] join name="Player 7C" uid=anon_user_7c playerId=anon_user_7c
-```
+
 
 ---
 

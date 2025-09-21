@@ -18,6 +18,7 @@ import {
   deleteDoc,
   collection,
   serverTimestamp,
+  Timestamp,
   increment,
   query,
   orderBy,
@@ -156,6 +157,8 @@ export interface ArenaPresenceEntry {
   joinedAt?: ISODate;
   authUid?: string;
   profileId?: string;
+  lastSeen?: ISODate;
+  expireAt?: ISODate;
 }
 
 export interface ArenaSeatAssignment {
@@ -424,6 +427,8 @@ export const joinArena = async (
     arenaId,
     codename,
     joinedAt: serverTimestamp(),
+    lastSeen: serverTimestamp(),
+    expireAt: Timestamp.fromMillis(Date.now() + 45_000),
   };
   if (profileId) {
     data.profileId = profileId;
@@ -580,6 +585,8 @@ export const watchArenaPresence = (
         joinedAt: data.joinedAt?.toDate?.().toISOString?.(),
         authUid: data.authUid ?? docSnap.id,
         profileId: data.profileId,
+        lastSeen: data.lastSeen?.toDate?.().toISOString?.(),
+        expireAt: data.expireAt?.toDate?.().toISOString?.(),
       } as ArenaPresenceEntry;
     });
     cb(players);

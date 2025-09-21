@@ -28,6 +28,8 @@ export interface ArenaPresenceEntry {
   joinedAt?: string;
   authUid?: string;
   profileId?: string;
+  lastSeen?: string;
+  expireAt?: string;
 }
 
 export interface ArenaSeatAssignment {
