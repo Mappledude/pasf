@@ -11,6 +11,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
+      <Route path="/lobby" element={<Navigate to="/" replace />} />
       {/* legacy /index should work */}
       <Route path="/index" element={<Navigate to="/" replace />} />
 

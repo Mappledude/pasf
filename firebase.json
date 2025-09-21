@@ -4,7 +4,8 @@
     "public": ".",
     "ignore": ["firebase.json","**/.*","**/node_modules/**"],
     "rewrites": [
-      { "source": "/arena/**", "destination": "/index.html" }
+      { "source": "/arena/**", "destination": "/index.html" },
+      { "source": "/lobby", "destination": "/index.html" }
     ]
   }
 }
