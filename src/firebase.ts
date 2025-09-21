@@ -290,14 +290,29 @@ export const createArena = async (input: CreateArenaInput) => {
   await ensureAnonAuth();
   const arenasRef = collection(db, "arenas");
   const now = serverTimestamp();
-  const aRef = await addDoc(arenasRef, {
-    name: input.name,
-    description: input.description ?? "",
-    capacity: input.capacity ?? null,
-    isActive: true,
-    createdAt: now,
-  });
-  return aRef.id;
+  try {
+    const aRef = await addDoc(arenasRef, {
+      name: input.name,
+      description: input.description ?? "",
+      capacity: input.capacity ?? null,
+      isActive: true,
+      createdAt: now,
+    });
+    console.info(`[STATE] createArena ${aRef.id} => lobby phase`);
+    await setDoc(
+      doc(db, "arenas", aRef.id, "state", "current"),
+      {
+        tick: 0,
+        phase: "lobby",
+        createdAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+    return aRef.id;
+  } catch (error) {
+    console.error("[STATE] createArena failed", error);
+    throw error;
+  }
 };
 
 export const listArenas = async (): Promise<Arena[]> => {
