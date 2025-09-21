@@ -8,6 +8,7 @@ export interface PlayerInput {
   jump?: boolean;
   attack?: boolean;
   codename?: string;
+  attackSeq?: number;
 }
 
 interface NormalizedInput {
@@ -15,6 +16,7 @@ interface NormalizedInput {
   right: boolean;
   jump: boolean;
   attack: boolean;
+  attackSeq: number;
 }
 
 interface InitOptions {
@@ -42,6 +44,7 @@ const defaultInput: NormalizedInput = {
   right: false,
   jump: false,
   attack: false,
+  attackSeq: 0,
 };
 
 function normalizeInput(input: PlayerInput, base: NormalizedInput): NormalizedInput {
@@ -50,6 +53,7 @@ function normalizeInput(input: PlayerInput, base: NormalizedInput): NormalizedIn
     right: typeof input.right === "boolean" ? input.right : base.right,
     jump: typeof input.jump === "boolean" ? input.jump : base.jump,
     attack: typeof input.attack === "boolean" ? input.attack : base.attack,
+    attackSeq: typeof input.attackSeq === "number" ? input.attackSeq : base.attackSeq,
   };
 }
 
@@ -59,7 +63,13 @@ function cloneNormalized(input: NormalizedInput): NormalizedInput {
 
 function inputsEqual(a?: NormalizedInput, b?: NormalizedInput): boolean {
   if (!a || !b) return false;
-  return a.left === b.left && a.right === b.right && a.jump === b.jump && a.attack === b.attack;
+  return (
+    a.left === b.left &&
+    a.right === b.right &&
+    a.jump === b.jump &&
+    a.attack === b.attack &&
+    a.attackSeq === b.attackSeq
+  );
 }
 
 function toWritePayload(input: NormalizedInput, codename?: string): ArenaInputWrite {
@@ -68,6 +78,7 @@ function toWritePayload(input: NormalizedInput, codename?: string): ArenaInputWr
     right: input.right,
     jump: input.jump,
     attack: input.attack,
+    attackSeq: input.attackSeq,
     codename,
   };
 }
