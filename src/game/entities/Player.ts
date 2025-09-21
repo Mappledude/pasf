@@ -127,6 +127,18 @@ export class Player extends Phaser.Events.EventEmitter {
     }
   }
 
+  getInputFlags() {
+    if (!this.controlsEnabled) {
+      return { left: false, right: false, jump: false, attack: false };
+    }
+    return {
+      left: this.controls.left.isDown,
+      right: this.controls.right.isDown,
+      jump: this.controls.jump.some((key) => key.isDown),
+      attack: this.controls.attack.isDown,
+    };
+  }
+
   isAttackActive() {
     return this.attackTimer > 0;
   }

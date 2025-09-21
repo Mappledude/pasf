@@ -1,4 +1,10 @@
-import { applyDamage, respawnPlayer, updateArenaPlayerState, watchArenaState, type ArenaPlayerState } from "../../firebase";
+import { watchArenaState, type ArenaPlayerState } from "../../firebase";
+import {
+  disposeActionBus,
+  initActionBus,
+  publishInput,
+  type PlayerInput,
+} from "../../net/ActionBus";
 
 export type ArenaStateSnapshot = {
   tick?: number;
@@ -9,62 +15,28 @@ export type ArenaStateSnapshot = {
 export interface ArenaSyncOptions {
   arenaId: string;
   meId: string;
-  throttleMs?: number;
+  codename?: string;
 }
 
 export interface ArenaSync {
-  updateLocalState(partial: Partial<ArenaPlayerState>): void;
+  updateLocalState(input: PlayerInput): void;
   subscribe(cb: (state: ArenaStateSnapshot | undefined) => void): () => void;
-  applyDamage(targetPlayerId: string, amount: number): Promise<void>;
-  respawn(spawn: { x: number; y: number }): Promise<void>;
   destroy(): void;
 }
 
 export function createArenaSync(options: ArenaSyncOptions): ArenaSync {
-  const { arenaId, meId, throttleMs = 50 } = options;
+  const { arenaId, meId, codename } = options;
   const listeners = new Set<(state: ArenaStateSnapshot | undefined) => void>();
 
-  let queued: Partial<ArenaPlayerState> | null = null;
-  let lastSent = 0;
-  let timeout: ReturnType<typeof setTimeout> | null = null;
   let unsubscribe: (() => void) | null = null;
   let destroyed = false;
 
-  const flush = () => {
-    if (!queued) return;
-    const payload = queued;
-    queued = null;
-    lastSent = Date.now();
-    updateArenaPlayerState(arenaId, meId, payload).catch((err) => {
-      console.warn("[arenaSync] failed to update player state", err);
-    });
-  };
-
-  const scheduleFlush = () => {
-    if (destroyed) return;
-    const now = Date.now();
-    const elapsed = now - lastSent;
-    const delay = Math.max(0, throttleMs - elapsed);
-    if (delay === 0) {
-      if (timeout) {
-        clearTimeout(timeout);
-        timeout = null;
-      }
-      flush();
-      return;
-    }
-
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-    timeout = setTimeout(() => {
-      timeout = null;
-      flush();
-    }, delay);
-  };
+  void initActionBus({ arenaId, playerId: meId, codename }).catch((err) => {
+    console.warn("[arenaSync] failed to init action bus", err);
+  });
 
   const ensureSubscription = () => {
-    if (unsubscribe) return;
+    if (unsubscribe || destroyed) return;
     unsubscribe = watchArenaState(arenaId, (state) => {
       listeners.forEach((listener) => {
         try {
@@ -77,10 +49,9 @@ export function createArenaSync(options: ArenaSyncOptions): ArenaSync {
   };
 
   return {
-    updateLocalState(partial: Partial<ArenaPlayerState>) {
+    updateLocalState(input: PlayerInput) {
       if (destroyed) return;
-      queued = { ...(queued ?? {}), ...partial };
-      scheduleFlush();
+      publishInput({ ...input, codename });
     },
     subscribe(cb) {
       if (destroyed) return () => undefined;
@@ -94,24 +65,14 @@ export function createArenaSync(options: ArenaSyncOptions): ArenaSync {
         }
       };
     },
-    applyDamage(targetPlayerId: string, amount: number) {
-      return applyDamage(arenaId, targetPlayerId, amount);
-    },
-    respawn(spawn) {
-      return respawnPlayer(arenaId, meId, spawn);
-    },
     destroy() {
       destroyed = true;
-      if (timeout) {
-        clearTimeout(timeout);
-        timeout = null;
-      }
       if (unsubscribe) {
         unsubscribe();
         unsubscribe = null;
       }
       listeners.clear();
-      queued = null;
+      disposeActionBus();
     },
   };
 }

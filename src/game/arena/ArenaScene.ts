@@ -6,8 +6,6 @@ import { RemoteOpponent } from "../entities/RemoteOpponent";
 const WORLD_WIDTH = 960;
 const WORLD_HEIGHT = 540;
 const GROUND_HEIGHT = 40;
-const DAMAGE_PER_HIT = 10;
-const DAMAGE_DEBOUNCE_MS = 120;
 const RESPAWN_DELAY_MS = 1500;
 
 export interface ArenaSceneConfig {
@@ -33,9 +31,10 @@ export default class ArenaScene extends Phaser.Scene {
   private sync?: ArenaSync;
   private unsubscribe?: () => void;
   private opponentId?: string;
-  private lastHitAt = 0;
   private controlsLocked = false;
   private latestOpponentName = "";
+  private latestSnapshot?: ArenaStateSnapshot;
+  private latestSnapshotAt = 0;
 
   constructor() {
     super("Arena");
@@ -62,20 +61,10 @@ export default class ArenaScene extends Phaser.Scene {
       this.physics.add.collider(this.player.sprite, this.ground);
     }
 
-    if (this.player && this.opponent) {
-      this.physics.add.overlap(
-        this.player.attackHitbox,
-        this.opponent.sprite,
-        this.handleAttackOverlap,
-        undefined,
-        this,
-      );
-    }
-
     this.createHud();
     this.createKoText();
 
-    this.sync = createArenaSync({ arenaId: this.arenaId, meId: this.me.id });
+    this.sync = createArenaSync({ arenaId: this.arenaId, meId: this.me.id, codename: this.me.codename });
     this.unsubscribe = this.sync.subscribe(this.handleArenaState);
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.handleShutdown, this);
@@ -87,49 +76,33 @@ export default class ArenaScene extends Phaser.Scene {
     if (!this.player) return;
 
     this.player.update(dt);
-
-    const body = this.player.body;
-    const facing = this.player.facing === 1 ? "R" : "L";
-    this.sync?.updateLocalState({
-      codename: this.me.codename,
-      x: this.player.sprite.x,
-      y: this.player.sprite.y,
-      vx: body.velocity.x,
-      vy: body.velocity.y,
-      facing,
-      anim: this.player.isAttackActive() ? "attack" : undefined,
-      hp: this.player.hp,
-    });
+    this.sync?.updateLocalState({ ...this.player.getInputFlags(), codename: this.me.codename });
+    this.applyAuthoritativeState();
   }
 
-  private handleAttackOverlap = () => {
-    if (!this.player || !this.opponentId || !this.opponent) return;
-    if (!this.player.isAttackActive()) return;
-    if (!this.player.registerHit()) return;
-
-    const now = this.time.now;
-    if (now - this.lastHitAt < DAMAGE_DEBOUNCE_MS) {
-      return;
-    }
-    this.lastHitAt = now;
-
-    this.sync?.applyDamage(this.opponentId, DAMAGE_PER_HIT).catch((err) => {
-      console.warn("[ArenaScene] failed to apply damage", err);
-    });
+  private handleArenaState = (state?: ArenaStateSnapshot) => {
+    this.latestSnapshot = state;
+    this.latestSnapshotAt = this.time.now;
   };
 
-  private handleArenaState = (state?: ArenaStateSnapshot) => {
-    const players = state?.players ?? {};
-    const meState = players?.[this.me.id];
+  private applyAuthoritativeState() {
+    const snapshot = this.latestSnapshot;
+    if (!snapshot) {
+      return;
+    }
 
+    const players = snapshot.players ?? {};
+    const meState = players?.[this.me.id];
     if (meState && this.player) {
       const hp = typeof meState.hp === "number" ? meState.hp : this.player.hp;
       const prevHp = this.player.hp;
       this.player.setHp(hp);
       if (prevHp > 0 && hp <= 0) {
         this.onLocalKo();
+      } else if (hp > 0 && this.controlsLocked) {
+        this.player.setControlsEnabled(true);
+        this.controlsLocked = false;
       }
-      this.updateHud();
     }
 
     const otherIds = Object.keys(players ?? {}).filter((id) => id !== this.me.id);
@@ -145,19 +118,24 @@ export default class ArenaScene extends Phaser.Scene {
     }
 
     const opponentState = players?.[targetOpponentId];
-    if (!opponentState) return;
+    if (!opponentState) {
+      return;
+    }
 
     if (this.opponentId !== targetOpponentId) {
       this.opponentId = targetOpponentId;
       this.opponent?.setCodename(opponentState.codename ?? "Agent");
-      this.lastHitAt = 0;
     }
 
     const oppHp = typeof opponentState.hp === "number" ? opponentState.hp : this.opponent?.hp ?? 100;
     const prevOppHp = this.opponent?.hp ?? oppHp;
+    const dtSec = Math.max(0, (this.time.now - this.latestSnapshotAt) / 1000);
+    const predictedX = (opponentState.x ?? this.spawn.x) + (opponentState.vx ?? 0) * dtSec;
+    const predictedY = (opponentState.y ?? this.spawn.y) + (opponentState.vy ?? 0) * dtSec;
+
     this.opponent?.setState({
-      x: opponentState.x ?? this.spawn.x,
-      y: opponentState.y ?? this.spawn.y,
+      x: predictedX,
+      y: predictedY,
       facing: opponentState.facing === "L" ? "L" : "R",
       hp: oppHp,
     });
@@ -168,7 +146,7 @@ export default class ArenaScene extends Phaser.Scene {
 
     this.latestOpponentName = opponentState.codename ?? "Agent";
     this.updateHud();
-  };
+  }
 
   private onLocalKo() {
     if (!this.player || this.controlsLocked) return;
@@ -179,12 +157,10 @@ export default class ArenaScene extends Phaser.Scene {
     this.respawnTimer?.remove(false);
     this.respawnTimer = this.time.delayedCall(RESPAWN_DELAY_MS, () => {
       if (!this.player) return;
-      this.sync?.respawn(this.spawn).catch((err) => console.warn("[ArenaScene] respawn failed", err));
       this.player.setPosition(this.spawn.x, this.spawn.y);
       this.player.setHp(100);
       this.player.setControlsEnabled(true);
       this.controlsLocked = false;
-      this.lastHitAt = 0;
       this.updateHud();
     });
   }
