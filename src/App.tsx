@@ -13,6 +13,8 @@ export default function App() {
       <Route path="/" element={<HomePage />} />
       {/* legacy /index should work */}
       <Route path="/index" element={<Navigate to="/" replace />} />
+      {/* alternative lobby entry point */}
+      <Route path="/lobby" element={<HomePage />} />
 
       {/* SPA admin (separate from legacy /admin.html) */}
       <Route path="/admin" element={<AdminPage />} />
