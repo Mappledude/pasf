@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
-import { collection, onSnapshot, orderBy, query, type FirestoreError } from "firebase/firestore";
-
+import {
+  collection,
+  onSnapshot,
+  orderBy,
+  query,
+  type FirestoreError,
+  type Unsubscribe,
+} from "firebase/firestore";
 import { db, ensureAnonAuth } from "../firebase";
 import type { Arena } from "../types/models";
 
@@ -16,56 +22,61 @@ export function useArenas(): UseArenasResult {
   const [error, setError] = useState<FirestoreError | null>(null);
 
   useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
+    let unsub: Unsubscribe | null = null;
     let cancelled = false;
 
-    const setupListener = async () => {
+    (async () => {
       try {
+        setLoading(true);
+        setError(null);
+
+        // Ensure rules pass before any reads
         await ensureAnonAuth();
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
 
-        const arenasQuery = query(collection(db, "arenas"), orderBy("createdAt", "desc"));
+        const arenasQuery = query(
+          collection(db, "arenas"),
+          orderBy("createdAt", "desc")
+        );
 
-        unsubscribe = onSnapshot(
+        unsub = onSnapshot(
           arenasQuery,
-          (snapshot) => {
-            const data = snapshot.docs.map((docSnap) => {
-              const docData = docSnap.data() as any;
+          (snap) => {
+            if (cancelled) return;
+            const data: Arena[] = snap.docs.map((docSnap) => {
+              const d = docSnap.data() as any;
               return {
                 id: docSnap.id,
-                name: docData.name,
-                description: docData.description ?? undefined,
-                capacity: docData.capacity ?? undefined,
-                isActive: !!docData.isActive,
-                createdAt: docData.createdAt?.toDate?.().toISOString?.() ?? new Date().toISOString(),
-              } as Arena;
+                name: d.name,
+                description: d.description ?? undefined,
+                capacity: d.capacity ?? undefined,
+                isActive: !!d.isActive,
+                createdAt:
+                  d.createdAt?.toDate?.()?.toISOString?.() ??
+                  new Date().toISOString(),
+              };
             });
             setArenas(data);
             setLoading(false);
             setError(null);
           },
           (err) => {
+            if (cancelled) return;
             setError(err);
             setLoading(false);
-          },
+          }
         );
-      } catch (err) {
+      } catch (e) {
         if (!cancelled) {
-          setError(err as FirestoreError);
+          setError(e as FirestoreError);
           setLoading(false);
         }
       }
-    };
-
-    void setupListener();
+    })();
 
     return () => {
       cancelled = true;
-      if (unsubscribe) {
-        unsubscribe();
-      }
+      if (unsub) unsub();
     };
   }, []);
 
