@@ -43,4 +43,5 @@ export interface LeaderboardEntry {
   losses: number;
   streak: number;
   updatedAt: string;
+  lastWinAt?: string;
 }

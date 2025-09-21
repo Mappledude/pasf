@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Phaser from "phaser";
 import { useParams, useNavigate } from "react-router-dom";
-import Phaser from "phaser";
 import {
   db,
   ensureAnonAuth,
@@ -10,6 +9,8 @@ import {
   claimArenaSeat,
   releaseArenaSeat,
   initArenaPlayerState,
+  watchLeaderboard,
+  type LeaderboardEntry,
 } from "../firebase";
 import {
   ensureArenaState,
@@ -32,7 +33,10 @@ export default function ArenaPage() {
   const [state, setState] = useState<ArenaState | undefined>(undefined);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
-const [gameBooted, setGameBooted] = useState(false);
+  const [gameBooted, setGameBooted] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(true);
+  const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
 
   const { players: presence, loading: presenceLoading, error: presenceError } = useArenaPresence(arenaId);
   const { seats, loading: seatsLoading, error: seatsError } = useArenaSeats(arenaId);
@@ -166,6 +170,22 @@ const [gameBooted, setGameBooted] = useState(false);
     };
   }, [arenaId, authReady, player?.codename, player?.id, user?.uid]);
 
+  useEffect(() => {
+    setLeaderboardLoading(true);
+    const unsubscribe = watchLeaderboard(
+      (entries) => {
+        setLeaderboard(entries);
+        setLeaderboardLoading(false);
+        setLeaderboardError(null);
+      },
+      () => {
+        setLeaderboardError("Failed to load leaderboard.");
+        setLeaderboardLoading(false);
+      },
+    );
+    return unsubscribe;
+  }, []);
+
   const agents = useMemo(() => Object.keys(state?.players ?? {}), [state]);
 
   const chipNames = useMemo(() => {
@@ -256,6 +276,7 @@ const [gameBooted, setGameBooted] = useState(false);
         gameRef.current.destroy(true);
         gameRef.current = null;
       }
+      setGameBooted(false);
       return;
     }
 
@@ -291,6 +312,7 @@ const [gameBooted, setGameBooted] = useState(false);
           },
         );
         gameRef.current = game;
+        setGameBooted(true);
       } catch (err) {
         if (cancelled) return;
         console.error("[ARENA] failed to boot Phaser host", err);
@@ -305,6 +327,7 @@ const [gameBooted, setGameBooted] = useState(false);
         gameRef.current.destroy(true);
         gameRef.current = null;
       }
+      setGameBooted(false);
     };
   }, [arenaId, isHost, meUid, player?.codename]);
 
@@ -423,6 +446,51 @@ const [gameBooted, setGameBooted] = useState(false);
         ) : null}
       </section>
 
+      <section className="card">
+        <div className="muted mono" style={{ marginBottom: 8 }}>
+          Leaderboard
+        </div>
+        {leaderboardLoading ? (
+          <div className="grid" style={{ gap: 8 }}>
+            {[0, 1, 2].map((i) => (
+              <span key={i} className="skel" style={{ height: 18, width: "100%" }} />
+            ))}
+          </div>
+        ) : leaderboard.length ? (
+          <ol
+            style={{
+              listStyle: "none",
+              margin: 0,
+              padding: 0,
+              display: "grid",
+              gap: 8,
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--fs-sm)",
+            }}
+          >
+            {leaderboard.slice(0, 5).map((entry, index) => (
+              <li
+                key={entry.id}
+                style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}
+              >
+                <span>
+                  <span className="muted">{index + 1}.</span>{" "}
+                  {entry.playerCodename ?? entry.playerId.slice(0, 6)}
+                </span>
+                <span className="muted">
+                  S{entry.streak ?? 0} · W{entry.wins ?? 0}
+                </span>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <span className="muted">No wins recorded yet.</span>
+        )}
+        {leaderboardError ? (
+          <div className="error" style={{ marginTop: 12 }}>{leaderboardError}</div>
+        ) : null}
+      </section>
+
       <section className="card card-canvas">
         <div className="grid" style={{ gap: 12, marginBottom: 12 }}>
           {[0, 1].map((seatNo) => {
@@ -488,15 +556,14 @@ const [gameBooted, setGameBooted] = useState(false);
             placeItems: "center",
           }}
         >
-{!gameBooted && (
-  <div
-    className="muted"
-    style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)", textAlign: "center" }}
-  >
-    Arena scene boots once auth and /state/current are ready.
-  </div>
-)}
-
+          {!gameBooted && (
+            <div
+              className="muted"
+              style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)", textAlign: "center" }}
+            >
+              Arena scene boots once auth and /state/current are ready.
+            </div>
+          )}
         </div>
         <div className="card-footer">[NET] {debugFooter}</div>
       </section>
