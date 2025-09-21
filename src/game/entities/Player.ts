@@ -217,6 +217,22 @@ export class Player extends Phaser.Events.EventEmitter {
     this.updateRigVisual();
   }
 
+  correctState(target: { x: number; y: number; vx?: number; vy?: number }, ratio: number) {
+    const t = Phaser.Math.Clamp(ratio, 0, 1);
+    const x = Phaser.Math.Linear(this.sprite.x, target.x, t);
+    const y = Phaser.Math.Linear(this.sprite.y, target.y, t);
+    const vx =
+      typeof target.vx === "number"
+        ? Phaser.Math.Linear(this.body.velocity.x, target.vx, t)
+        : this.body.velocity.x;
+    const vy =
+      typeof target.vy === "number"
+        ? Phaser.Math.Linear(this.body.velocity.y, target.vy, t)
+        : this.body.velocity.y;
+    this.setPosition(x, y);
+    this.body.setVelocity(vx, vy);
+  }
+
   setFacing(direction: "L" | "R") {
     const next = direction === "L" ? -1 : 1;
     if (this.facing === next) {
