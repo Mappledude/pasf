@@ -29,7 +29,6 @@ import {
 import { useAuth } from "../context/AuthContext";
 import TouchControls from "../game/input/TouchControls";
 import { useArenaRuntime } from "../utils/useArenaRuntime";
-import { useArenaMeta } from "../utils/useArenaMeta";
 
 // Optional: keep a gated warn helper (don’t also import debugWarn)
 const debugWarn = (...args: unknown[]) => {
