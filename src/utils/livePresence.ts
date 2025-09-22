@@ -1,4 +1,4 @@
-import type { LivePresence } from "../firebase";
+import type { LivePresence } from "../lib/presence";
 import type { ArenaPresenceEntry } from "../types/models";
 
 const normalizeString = (value: unknown): string | undefined => {
