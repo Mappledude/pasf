@@ -13,7 +13,6 @@ import {
   getDoc,
   setDoc,
   updateDoc,
-  addDoc,
   getDocs,
   deleteDoc,
   collection,
@@ -360,31 +359,42 @@ export interface CreateArenaInput {
   name: string;
   description?: string;
   capacity?: number;
+  id?: string;
 }
 
 export const createArena = async (input: CreateArenaInput) => {
   await ensureAnonAuth();
-  const arenasRef = collection(db, "arenas");
+  const rawId = (input.id ?? input.name ?? "").trim();
+  if (!rawId) {
+    throw new Error("Arena id required");
+  }
+  const arenaId = rawId.toUpperCase();
   const now = serverTimestamp();
   try {
-    const aRef = await addDoc(arenasRef, {
-      name: input.name,
-      description: input.description ?? "",
-      capacity: input.capacity ?? null,
-      isActive: true,
-      createdAt: now,
-    });
-    console.info(`[STATE] createArena ${aRef.id} => lobby phase`);
+    const { ensureArenaFixed } = await import("./lib/arenaRepo");
+    const { aRef, sRef, createdArena, createdState } = await ensureArenaFixed(arenaId);
     await setDoc(
-      doc(db, "arenas", aRef.id, "state", "current"),
+      aRef,
+      {
+        name: input.name,
+        description: input.description ?? "",
+        capacity: input.capacity ?? null,
+        isActive: true,
+        ...(createdArena ? { createdAt: now } : {}),
+      },
+      { merge: true }
+    );
+    await setDoc(
+      sRef,
       {
         tick: 0,
         phase: "lobby",
-        createdAt: serverTimestamp(),
+        ...(createdState ? { createdAt: now } : {}),
       },
-      { merge: true },
+      { merge: true }
     );
-    return aRef.id;
+    console.info(`[STATE] createArena ${arenaId} => lobby phase`);
+    return arenaId;
   } catch (error) {
     console.error("[STATE] createArena failed", error);
     throw error;
@@ -394,18 +404,17 @@ export const createArena = async (input: CreateArenaInput) => {
 export const ensureArenaDocument = async (arenaId: string): Promise<void> => {
   console.info("[ARENA] ensureArenaDocument: start", { arenaId });
   await ensureAnonAuth();
-  const ref = doc(db, "arenas", arenaId);
-  const snapshot = await getDoc(ref);
-  const payload: Record<string, unknown> = {
-    mode: "CLIFF",
-  };
-
-  if (!snapshot.exists()) {
-    payload.createdAt = serverTimestamp();
-  }
-
-  await setDoc(ref, payload, { merge: true });
-  console.info("[ARENA] ensureArenaDocument: ready", { arenaId, created: !snapshot.exists() });
+  const { ensureArenaFixed } = await import("./lib/arenaRepo");
+  const { aRef, createdArena } = await ensureArenaFixed(arenaId);
+  await setDoc(
+    aRef,
+    {
+      mode: "CLIFF",
+      ...(createdArena ? { createdAt: serverTimestamp() } : {}),
+    },
+    { merge: true }
+  );
+  console.info("[ARENA] ensureArenaDocument: ready", { arenaId, created: createdArena });
 };
 
 export const listArenas = async (): Promise<Arena[]> => {
@@ -689,6 +698,7 @@ export type LivePresence = {
   playerId?: string;
   lastSeen: number;
   displayName: string;
+  presenceId?: string;
 };
 
 export const resolveDisplayName = (
@@ -704,29 +714,36 @@ export const resolveDisplayName = (
 
 export const watchArenaPresence = (arenaId: string, onChange: (live: LivePresence[]) => void) => {
   const presenceRef = collection(doc(db, "arenas", arenaId), "presence");
-  return onSnapshot(presenceRef, async (snap) => {
-    const now = Date.now();
-    const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-    const liveRaw = rows.filter((r) => now - Number(r.lastSeen ?? 0) <= 20_000);
-    const cache = new Map<string, any>();
-    await Promise.all(
-      liveRaw.map(async (r) => {
-        if (r.playerId && !cache.has(r.playerId)) {
-          const ps = await getDoc(doc(db, "players", r.playerId));
-          cache.set(r.playerId, ps.exists() ? ps.data() : null);
-        }
-      })
-    );
-    const live = liveRaw.map((r) => ({
-      id: r.id,
-      authUid: r.authUid ?? "",
-      playerId: r.playerId,
-      lastSeen: Number(r.lastSeen ?? 0),
-      displayName: resolveDisplayName(r.profile ?? null, cache.get(r.playerId) ?? null, r.authUid ?? null),
-    }));
-    console.info("[PRESENCE] live", live.map((p) => ({ id: p.id, dn: p.displayName })));
-    onChange(live);
-  });
+  return onSnapshot(
+    presenceRef,
+    async (snap) => {
+      const now = Date.now();
+      const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+      const liveRaw = rows.filter((r) => now - Number(r.lastSeen ?? 0) <= 20_000);
+      const cache = new Map<string, any>();
+      await Promise.all(
+        liveRaw.map(async (r) => {
+          if (r.playerId && !cache.has(r.playerId)) {
+            const ps = await getDoc(doc(db, "players", r.playerId));
+            cache.set(r.playerId, ps.exists() ? ps.data() : null);
+          }
+        })
+      );
+      const live = liveRaw.map((r) => ({
+        id: r.id,
+        authUid: r.authUid ?? "",
+        playerId: r.playerId,
+        lastSeen: Number(r.lastSeen ?? 0),
+        displayName: resolveDisplayName(r.profile ?? null, cache.get(r.playerId) ?? null, r.authUid ?? null),
+        presenceId: r.id,
+      }));
+      console.info("[PRESENCE] live", live.map((p) => ({ id: p.id, dn: p.displayName })));
+      onChange(live);
+    },
+    (err) => {
+      console.error("[PRESENCE] watch-failed", { code: err?.code, message: err?.message });
+    }
+  );
 };
 
 const arenaStateDoc = (arenaId: string) =>

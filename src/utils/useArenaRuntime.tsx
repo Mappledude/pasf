@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ensureAnonAuth } from "../auth/ensureAnonAuth";
 import { startPresence } from "../arena/presence";
+import { ensureArenaFixed } from "../lib/arenaRepo";
 import { watchArenaPresence, type LivePresence } from "../firebase";
 import { writeArenaInput } from "../net/ActionBus";
 import { startHostLoop } from "../game/net/hostLoop";
@@ -19,15 +20,21 @@ export function useArenaRuntime(arenaId: string, playerId?: string, profile?: { 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      await ensureAnonAuth();
-      if (cancelled) return;
-      const { presenceId: myPresenceId, stop } = await startPresence(arenaId, playerId, profile);
-      if (cancelled) {
-        await stop();
-        return;
+      console.info("[ARENA] boot", { arenaId });
+      try {
+        await ensureAnonAuth();
+        await ensureArenaFixed(arenaId);
+        if (cancelled) return;
+        const { presenceId: myPresenceId, stop } = await startPresence(arenaId, playerId, profile);
+        if (cancelled) {
+          await stop();
+          return;
+        }
+        setPresenceId(myPresenceId);
+        stopPresenceRef.current = stop;
+      } catch (e: any) {
+        console.error("[ARENA] boot-failed", { message: String(e?.message ?? e) });
       }
-      setPresenceId(myPresenceId);
-      stopPresenceRef.current = stop;
     })();
     return () => {
       cancelled = true;
