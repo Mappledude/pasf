@@ -19,13 +19,36 @@ match /arenas/{arenaId}/state/{stateId} {
 
 ```rules
 match /arenas/{arenaId} {
-  match /inputs/{uid} {
+  match /inputs/{docId} {
     allow read: if isSignedIn();
-    allow write: if isSignedIn() && request.auth.uid == uid;
+    allow create, update: if isSignedIn()
+      && request.resource.data.authUid == request.auth.uid;
+    allow delete: if isSignedIn()
+      && resource != null
+      && resource.data.authUid == request.auth.uid;
   }
 
   match /presence/{playerId} {
-    allow read, write: if isSignedIn();
+    function hasMatchingAuthUid() {
+      return request.resource != null
+        && request.resource.data.authUid == request.auth.uid;
+    }
+
+    function hasValidTimestamps() {
+      return request.resource != null
+        && request.resource.data.lastSeen is timestamp
+        && request.resource.data.expireAt is timestamp
+        && request.resource.data.lastSeen >= request.time - duration.value(5, "minutes")
+        && request.resource.data.lastSeen <= request.time
+        && request.resource.data.expireAt >= request.time
+        && request.resource.data.expireAt <= request.time + duration.value(10, "minutes");
+    }
+
+    allow read: if isSignedIn();
+    allow create, update: if isSignedIn() && hasMatchingAuthUid() && hasValidTimestamps();
+    allow delete: if isSignedIn()
+      && resource != null
+      && resource.data.authUid == request.auth.uid;
   }
 }
 ```

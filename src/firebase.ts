@@ -197,7 +197,6 @@ export interface ArenaInputSnapshot {
   attackSeq?: number;
   updatedAt?: ISODate;
 }
-
 export interface ArenaEntityState {
   x: number;
   y: number;
@@ -712,22 +711,7 @@ const serializeInputSnapshot = (snap: QueryDocumentSnapshot): ArenaInputSnapshot
   return {
     playerId: (data.playerId as string) ?? snap.id,
     presenceId: snap.id,
-const serializeInputSnapshot = (snap: QueryDocumentSnapshot): ArenaInputSnapshot => {
-  const data = snap.data() as Record<string, unknown>;
-  return {
-    playerId: (data.playerId as string) ?? snap.id,
-    presenceId: snap.id,
-    authUid: typeof data.authUid === "string" ? data.authUid : undefined, // ✅
-    codename: (data.codename as string) ?? undefined,
-    left: typeof data.left === "boolean" ? data.left : undefined,
-    right: typeof data.right === "boolean" ? data.right : undefined,
-    jump: typeof data.jump === "boolean" ? data.jump : undefined,
-    attack: typeof data.attack === "boolean" ? data.attack : undefined,
-    attackSeq: typeof data.attackSeq === "number" ? data.attackSeq : undefined,
-    updatedAt: readTimestamp(data.updatedAt),
-  };
-};
-
+    authUid: typeof data.authUid === "string" ? data.authUid : undefined,
     codename: (data.codename as string) ?? undefined,
     left: typeof data.left === "boolean" ? data.left : undefined,
     right: typeof data.right === "boolean" ? data.right : undefined,
@@ -808,6 +792,7 @@ export async function writeArenaInput(
   input: ArenaInputWrite
 ): Promise<void> {
   await ensureAnonAuth();
+
   const uid = auth.currentUser?.uid;
   if (!uid) throw new Error("No authenticated user");
 
@@ -815,7 +800,7 @@ export async function writeArenaInput(
   const payload: Record<string, unknown> = {
     playerId: input.presenceId,
     presenceId: input.presenceId,
-    authUid: uid,                         // ✅ stamp owner for security rules
+    authUid: uid, // satisfies rules: request.resource.data.authUid == request.auth.uid
     left: input.left,
     right: input.right,
     jump: input.jump,
@@ -827,6 +812,7 @@ export async function writeArenaInput(
 
   await setDoc(ref, payload, { merge: true });
 }
+
 
     updatedAt: serverTimestamp(),
   };
