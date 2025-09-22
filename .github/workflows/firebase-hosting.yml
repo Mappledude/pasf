@@ -1,0 +1,48 @@
+name: Deploy to Firebase Hosting
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            **/node_modules
+            ~/.npm
+          key: npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: npm-
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Install firebase-tools
+        run: npm i -g firebase-tools@14
+
+      - name: Write service account creds
+        run: |
+          echo "$FIREBASE_SERVICE_ACCOUNT_STICKFIGHTPA" > $RUNNER_TEMP/gcp.json
+        env:
+          FIREBASE_SERVICE_ACCOUNT_STICKFIGHTPA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STICKFIGHTPA }}
+
+      - name: Deploy Hosting
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp.json
+          PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID || 'stickfightpa' }}
+          SITE_ID: ${{ vars.FIREBASE_SITE || 'stickfightpa' }}
+        run: |
+          firebase deploy --only hosting --project "$PROJECT_ID" --site "$SITE_ID"
