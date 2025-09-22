@@ -18,30 +18,59 @@ export function useArenaRuntime(
   const [live, setLive] = useState<LivePresence[]>([]);
   const [stable, setStable] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
+  const [nextRetryAt, setNextRetryAt] = useState<number | undefined>(undefined);
 
   const offRef = useRef<() => void>();
   const stopPresenceRef = useRef<() => Promise<void>>();
   const stopWriterRef = useRef<() => void>();
 
-  // Boot: auth → ensure arena docs → start presence
+  // Boot with retry: auth → start presence (first) → try seeding arena (non-fatal)
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
 
-    setBootError(null);
-    setPresenceId(undefined);
+    const clearRetryTimer = () => {
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = undefined;
+      }
+    };
 
-    if (!arenaId) {
-      setBootError("no-arena-id");
-      return () => {};
-    }
+    const resetRuntime = () => {
+      setPresenceId(undefined);
+      // stop presence heartbeat if running
+      const stopPresence = stopPresenceRef.current;
+      stopPresenceRef.current = undefined;
+      if (stopPresence) {
+        stopPresence().catch((err) => {
+          console.error("[ARENA] presence-stop-failed", { message: String(err?.message ?? err) });
+        });
+      }
+      // stop writer loop if running
+      if (stopWriterRef.current) {
+        stopWriterRef.current();
+        stopWriterRef.current = undefined;
+      }
+    };
 
-    (async () => {
-      console.info("[ARENA] boot", { arenaId });
+    const boot = async () => {
+      attempt += 1;
+      const attemptInfo = { arenaId, attempt };
+      setBootError(null);
+      setNextRetryAt(undefined);
+      console.info("[ARENA] boot", attemptInfo);
+
       try {
+        if (!arenaId) {
+          throw new Error("no-arena-id");
+        }
+
+        // 1) Ensure auth
         await ensureAnonAuth();
-        await ensureArenaFixed(arenaId);
         if (cancelled) return;
 
+        // 2) Start presence FIRST (so roster shows even if seeding fails)
         const { presenceId: myPresenceId, stop } = await startPresence(arenaId, playerId, profile);
         if (cancelled) {
           await stop();
@@ -49,18 +78,49 @@ export function useArenaRuntime(
         }
         setPresenceId(myPresenceId);
         stopPresenceRef.current = stop;
+        console.info("[PRESENCE] started", { arenaId, presenceId: myPresenceId });
 
-        console.info("[ARENA] boot-ready", { arenaId, presenceId: myPresenceId });
+        // 3) Try to seed arena docs; do not fail boot if this is blocked by rules
+        try {
+          await ensureArenaFixed(arenaId);
+          console.info("[ARENA] seeded", { arenaId });
+        } catch (seedErr: any) {
+          console.warn("[ARENA] seed-skipped", { message: String(seedErr?.message ?? seedErr) });
+        }
+
         setBootError(null);
+        setNextRetryAt(undefined);
+        console.info("[ARENA] boot-ready", { arenaId, presenceId: myPresenceId });
       } catch (e: any) {
-        const msg = typeof e?.message === "string" ? e.message : String(e);
-        console.error("[ARENA] boot-failed", { message: msg });
-        if (!cancelled) setBootError(msg);
+        if (cancelled) return;
+        const message = String(e?.message ?? e ?? "unknown-error");
+        setBootError(message);
+
+        // Reset any partial state and schedule a retry with backoff
+        resetRuntime();
+        const retryMs = Math.min(30000, 2000 * attempt); // 2s, 4s, 8s, ... capped at 30s
+        const when = Date.now() + retryMs;
+        setNextRetryAt(when);
+
+        console.error("[ARENA] boot-failed", { ...attemptInfo, message });
+        console.info("[ARENA] boot-retry", { ...attemptInfo, retryMs });
+
+        clearRetryTimer();
+        retryTimer = setTimeout(() => {
+          retryTimer = undefined;
+          if (!cancelled) {
+            void boot();
+          }
+        }, retryMs);
       }
-    })();
+    };
+
+    resetRuntime();
+    void boot();
 
     return () => {
       cancelled = true;
+      clearRetryTimer();
     };
   }, [arenaId, playerId, profile]);
 
@@ -80,11 +140,11 @@ export function useArenaRuntime(
     };
   }, [arenaId]);
 
-  // Debounced roster stability (for UI only)
+  // Debounced roster stability (UI only)
   useEffect(() => {
     const t = setTimeout(() => {
       const ok = live.length >= 2;
-      console.info("[PRESENCE] roster stable", { count: live.length, ids: live.map(p => p.id) });
+      console.info("[PRESENCE] roster stable", { count: live.length, ids: live.map((p) => p.id) });
       setStable(ok);
     }, WAIT_DEBOUNCE_MS);
     return () => clearTimeout(t);
@@ -94,7 +154,7 @@ export function useArenaRuntime(
   useEffect(() => {
     if (!arenaId || !presenceId) return;
 
-    const leader = [...live].map(p => p.id).sort()[0];
+    const leader = [...live].map((p) => p.id).sort()[0];
     const amWriter = leader && leader === presenceId;
 
     if (!amWriter) {
@@ -105,7 +165,6 @@ export function useArenaRuntime(
       return;
     }
 
-    // Start/replace host loop @12 Hz
     stopWriterRef.current?.();
     stopWriterRef.current = startHostLoop({
       arenaId,
@@ -121,7 +180,7 @@ export function useArenaRuntime(
       stopWriterRef.current?.();
       stopWriterRef.current = undefined;
     };
-  }, [arenaId, presenceId, JSON.stringify(live.map(p => p.id).sort())]);
+  }, [arenaId, presenceId, JSON.stringify(live.map((p) => p.id).sort())]);
 
   // Input enqueue bound to current presence
   const enqueueInput = useMemo(() => {
@@ -143,5 +202,5 @@ export function useArenaRuntime(
     };
   }, [arenaId]);
 
-  return { presenceId, live, stable, enqueueInput, bootError };
+  return { presenceId, live, stable, enqueueInput, bootError, nextRetryAt };
 }
