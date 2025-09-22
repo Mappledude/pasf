@@ -23,18 +23,51 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
-      - name: Cache node_modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            **/node_modules
-            ~/.npm
-          key: npm-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: npm-
+      # Detect package manager and install accordingly.
+      - name: Install dependencies (lockfile-aware)
+        id: deps
+        run: |
+          set -euo pipefail
+          if [ -f pnpm-lock.yaml ]; then
+            PM=pnpm
+          elif [ -f yarn.lock ]; then
+            PM=yarn
+          elif [ -f package-lock.json ]; then
+            PM=npm-lock
+          else
+            PM=npm-nolock
+          fi
 
-      - run: npm ci
-      - run: npm run build
+          echo "pm=$PM" >> $GITHUB_OUTPUT
+
+          case "$PM" in
+            pnpm)
+              echo "Using pnpm"
+              corepack enable
+              corepack prepare pnpm@latest --activate
+              pnpm install --frozen-lockfile
+              ;;
+            yarn)
+              echo "Using yarn"
+              corepack enable
+              corepack prepare yarn@stable --activate
+              yarn install --immutable
+              ;;
+            npm-lock)
+              echo "Using npm (ci with lockfile)"
+              npm ci
+              ;;
+            npm-nolock)
+              echo "Using npm (no lockfile found) → npm install"
+              # No lockfile yet — allow install (do not write lockfile)
+              npm install --no-audit --no-fund
+              ;;
+          esac
+
+      - name: Build
+        run: npm run build
         env:
           VITE_COMMIT_SHA: ${{ env.VITE_COMMIT_SHA }}
           VITE_COMMIT_SHORT: ${{ env.VITE_COMMIT_SHORT }}
