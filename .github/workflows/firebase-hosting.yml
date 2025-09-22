@@ -65,6 +65,9 @@ jobs:
               ;;
           esac
 
+      - name: Type Check
+        run: npx tsc -p tsconfig.build.json --noEmit
+
       - name: Build
         run: npm run build
         env:
