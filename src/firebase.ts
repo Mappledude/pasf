@@ -913,8 +913,6 @@ export async function writeArenaInput(
     updatedAt: serverTimestamp(),
   };
 
-// assumes: ref: DocumentReference, input: any, payload: Record<string, unknown>
-{
   // stamp only known, correctly-typed fields
   if (typeof input.authUid === "string" && input.authUid.length > 0) {
     payload.authUid = input.authUid;

@@ -98,5 +98,144 @@ async function sendInput(state: ActionBusState, payload: NormalizedInput) {
   }
 }
 
-function scheduleSend(state: ActionBus
-)
+function scheduleSend(state: ActionBusState, payload: NormalizedInput) {
+  if (!state.ready) {
+    return;
+  }
+
+  const nextPayload = cloneNormalized(payload);
+
+  if (inputsEqual(nextPayload, state.lastSentPayload)) {
+    if (state.pendingTimer) {
+      clearTimeout(state.pendingTimer);
+      state.pendingTimer = undefined;
+    }
+    state.pendingPayload = undefined;
+    return;
+  }
+
+  const now = Date.now();
+  const elapsed = now - state.lastSendAt;
+
+  if (elapsed >= THROTTLE_MS) {
+    if (state.pendingTimer) {
+      clearTimeout(state.pendingTimer);
+      state.pendingTimer = undefined;
+    }
+    state.pendingPayload = undefined;
+    void sendInput(state, nextPayload);
+    return;
+  }
+
+  state.pendingPayload = nextPayload;
+
+  if (state.pendingTimer) {
+    return;
+  }
+
+  const delay = Math.max(THROTTLE_MS - elapsed, 0);
+
+  state.pendingTimer = setTimeout(() => {
+    state.pendingTimer = undefined;
+
+    if (!state.ready || busState !== state) {
+      state.pendingPayload = undefined;
+      return;
+    }
+
+    const pending = state.pendingPayload;
+    state.pendingPayload = undefined;
+    if (!pending) {
+      return;
+    }
+
+    if (inputsEqual(pending, state.lastSentPayload)) {
+      return;
+    }
+
+    void sendInput(state, pending);
+  }, delay);
+}
+
+export async function initActionBus(options: InitOptions): Promise<void> {
+  if (busState && busState.pendingTimer) {
+    clearTimeout(busState.pendingTimer);
+  }
+
+  const initialInput = cloneNormalized(defaultInput);
+
+  const state: ActionBusState = {
+    arenaId: options.arenaId,
+    presenceId: options.presenceId,
+    codename: options.codename,
+    ready: true,
+    lastSendAt: 0,
+    lastSentPayload: undefined,
+    latestInput: cloneNormalized(initialInput),
+    pendingPayload: undefined,
+    pendingTimer: undefined,
+  };
+
+  busState = state;
+
+  await sendInput(state, initialInput);
+}
+
+export function publishInput(input: PlayerInput): void {
+  const state = busState;
+  if (!state || !state.ready) {
+    return;
+  }
+
+  if (typeof input.codename === "string" && input.codename) {
+    state.codename = input.codename;
+  }
+
+  const current = state.latestInput;
+  const next = normalizeInput(input, current);
+  if (inputsEqual(current, next)) {
+    return;
+  }
+
+  state.latestInput = next;
+  scheduleSend(state, next);
+}
+
+export function resetActionBus(): void {
+  const state = busState;
+  if (!state) {
+    return;
+  }
+
+  if (state.pendingTimer) {
+    clearTimeout(state.pendingTimer);
+    state.pendingTimer = undefined;
+  }
+
+  state.latestInput = cloneNormalized(defaultInput);
+  state.lastSentPayload = undefined;
+  state.lastSendAt = 0;
+  state.pendingPayload = undefined;
+  scheduleSend(state, state.latestInput);
+}
+
+export function disposeActionBus(): void {
+  const state = busState;
+  if (!state) {
+    return;
+  }
+
+  state.ready = false;
+
+  if (state.pendingTimer) {
+    clearTimeout(state.pendingTimer);
+    state.pendingTimer = undefined;
+  }
+
+  const { arenaId, presenceId } = state;
+  busState = null;
+
+  void deleteArenaInput(arenaId, presenceId).catch((error) => {
+    console.warn("[INPUT] delete failed", { presenceId, error });
+  });
+}
