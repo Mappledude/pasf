@@ -68,7 +68,7 @@ jobs:
       - name: Deploy LIVE to Hosting site
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp.json
-        run: firebase deploy --only hosting --project stickfightpa --site stickfightpa --non-interactive
+        run: firebase deploy --only hosting --project stickfightpa stickfightpa --non-interactive
 
       - name: Smoke test LIVE (retry up to 6×)
         run: |
