@@ -1,6 +1,6 @@
 import { deleteArenaInput, writeArenaInput, type ArenaInputWrite } from "../firebase";
 
-const THROTTLE_MS = 100;
+const THROTTLE_MS = 60;
 
 export interface PlayerInput {
   left?: boolean;
@@ -21,13 +21,13 @@ interface NormalizedInput {
 
 interface InitOptions {
   arenaId: string;
-  playerId: string;
+  presenceId: string;   // per-tab session id
   codename?: string;
 }
 
 interface ActionBusState {
   arenaId: string;
-  playerId: string;
+  presenceId: string;   // per-tab session id
   codename?: string;
   ready: boolean;
   lastSendAt: number;
@@ -72,14 +72,15 @@ function inputsEqual(a?: NormalizedInput, b?: NormalizedInput): boolean {
   );
 }
 
-function toWritePayload(input: NormalizedInput, codename?: string): ArenaInputWrite {
+function toWritePayload(state: ActionBusState, input: NormalizedInput): ArenaInputWrite {
   return {
+    presenceId: state.presenceId,
     left: input.left,
     right: input.right,
     jump: input.jump,
     attack: input.attack,
     attackSeq: input.attackSeq,
-    codename,
+    codename: state.codename,
   };
 }
 
@@ -89,84 +90,12 @@ async function sendInput(state: ActionBusState, payload: NormalizedInput) {
   state.pendingPayload = undefined;
 
   try {
-    await writeArenaInput(state.arenaId, state.playerId, toWritePayload(payload, state.codename));
+    const seq = payload.attackSeq;
+    console.info("[INPUT] write", { presenceId: state.presenceId, seq });
+    await writeArenaInput(state.arenaId, toWritePayload(state, payload));
   } catch (error) {
-    console.warn("[NET] input publish failed", error);
+    console.warn("[INPUT] rejected", { presenceId: state.presenceId, error });
   }
 }
 
-function scheduleSend(state: ActionBusState, payload: NormalizedInput) {
-  if (inputsEqual(state.lastSentPayload, payload)) return;
-
-  const now = Date.now();
-  const elapsed = now - state.lastSendAt;
-
-  if (elapsed >= THROTTLE_MS && !state.pendingTimer) {
-    void sendInput(state, payload);
-    return;
-  }
-
-  state.pendingPayload = cloneNormalized(payload);
-
-  if (!state.pendingTimer) {
-    const delay = Math.max(THROTTLE_MS - elapsed, 0);
-    state.pendingTimer = setTimeout(() => {
-      state.pendingTimer = undefined;
-      const toSend = state.pendingPayload;
-      state.pendingPayload = undefined;
-      if (!toSend) return;
-      if (inputsEqual(state.lastSentPayload, toSend)) return;
-      void sendInput(state, toSend);
-    }, delay);
-  }
-}
-
-export async function initActionBus(options: InitOptions): Promise<void> {
-  if (busState) {
-    disposeActionBus();
-  }
-
-  const state: ActionBusState = {
-    arenaId: options.arenaId,
-    playerId: options.playerId,
-    codename: options.codename,
-    ready: true,
-    lastSendAt: 0,
-    latestInput: cloneNormalized(defaultInput),
-  };
-
-  busState = state;
-
-  try {
-    // Seed doc so host loop can read a known key immediately
-    await writeArenaInput(options.arenaId, options.playerId, toWritePayload(defaultInput, options.codename));
-  } catch (error) {
-    console.warn("[NET] initial input publish skipped", error);
-  }
-}
-
-export function publishInput(input: PlayerInput): void {
-  if (!busState || !busState.ready) return;
-
-  if (input.codename) {
-    busState.codename = input.codename;
-  }
-
-  const next = normalizeInput(input, busState.latestInput);
-  if (inputsEqual(busState.latestInput, next)) return;
-
-  busState.latestInput = cloneNormalized(next);
-  scheduleSend(busState, next);
-}
-
-export function disposeActionBus(): void {
-  if (!busState) return;
-  const { arenaId, playerId } = busState;
-  if (busState.pendingTimer) {
-    clearTimeout(busState.pendingTimer);
-  }
-  busState = null;
-  void deleteArenaInput(arenaId, playerId).catch((error) => {
-    console.warn("[NET] input dispose cleanup failed", error);
-  });
-}
+function scheduleSend(state: ActionBus

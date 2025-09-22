@@ -51,6 +51,7 @@ export type ArenaStateSnapshot = {
   tick?: number;
   tMs?: number;
   writerUid?: string;
+  lastWriter?: string;
   phase?: ArenaPhase;
   entities?: Record<string, ArenaEntityFrame | undefined>;
   players?: Record<string, ArenaPlayerFrame | undefined>;
@@ -236,7 +237,14 @@ function mapAuthoritativeState(state: unknown): ArenaStateSnapshot | undefined {
 
   return {
     tick: typeof raw.tick === "number" ? raw.tick : undefined,
+    tMs:
+      typeof raw.ts === "number"
+        ? raw.ts
+        : typeof raw.tMs === "number"
+        ? raw.tMs
+        : undefined,
     players: Object.keys(players).length > 0 ? players : undefined,
     writerUid: typeof raw.writerUid === "string" ? raw.writerUid : undefined,
+    lastWriter: typeof raw.lastWriter === "string" ? raw.lastWriter : undefined,
   };
 }

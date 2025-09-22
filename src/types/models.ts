@@ -22,6 +22,7 @@ export interface Arena {
 }
 
 export interface ArenaPresenceEntry {
+  presenceId: string;
   playerId: string;
   codename: string;
   displayName?: string | null;
