@@ -65,13 +65,12 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT_STICKFIGHTPA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STICKFIGHTPA }}
 
-    - name: Deploy LIVE to Hosting site
+      - name: Deploy LIVE to Hosting site
         env:
-        GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp.json
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp.json
         run: firebase deploy --only hosting --project stickfightpa --non-interactive
 
-
-      - name: Smoke test LIVE (retry up to 6×)
+      - name: Smoke test LIVE (retry up to 6x)
         run: |
           set -euo pipefail
           URL_HOME="https://stickfightpa.web.app/"
@@ -79,8 +78,8 @@ jobs:
           ok=0
           for i in 1 2 3 4 5 6; do
             echo "Attempt $i..."
-            curl -fsSL -H 'Cache-Control: no-cache' -o home.html "$URL_HOME" || true
-            curl -fsSL -H 'Cache-Control: no-cache' -o live.json "$URL_VER" || true
+            curl -fsSL -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' -o home.html "$URL_HOME" || true
+            curl -fsSL -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' -o live.json "$URL_VER" || true
             if grep -q "RED CANARY ACTIVE" home.html; then
               echo "Found RED CANARY ACTIVE in home.html"
               ok=1; break
