@@ -7,10 +7,22 @@ const MAX_CONSECUTIVE_FAILURES = 3;
 
 export const startPresence = async (arenaId: string, playerId?: string, profile?: { displayName?: string }) => {
   const uid = auth.currentUser?.uid;
-  if (!uid) { console.error("[PRESENCE] write-failed", { reason: "no-auth" }); throw new Error("no-auth"); }
+  if (!uid) {
+    console.error("[PRESENCE] write-failed", { reason: "no-auth" });
+    throw new Error("no-auth");
+  }
+
   const presenceId = nanoid(10);
   const ref = doc(db, "arenas", arenaId, "presence", presenceId);
   const path = ref.path;
+
+  const basePayload = {
+    authUid: uid,
+    playerId: playerId ?? null,
+    profile: profile ?? null,
+    lastSeen: Date.now(),
+    lastSeenSrv: serverTimestamp(),
+  } as const;
 
   let timer: ReturnType<typeof setInterval> | undefined;
   let consecutiveFailures = 0;
@@ -24,15 +36,19 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
   };
 
   const write = async (stage: "start" | "beat") => {
+    const payload = { ...basePayload, stage };
+    console.info("[PRESENCE] write-attempt", {
+      stage,
+      path,
+      arenaId,
+      presenceId,
+      uid,
+      hasAuthUid: Object.prototype.hasOwnProperty.call(payload, "authUid"),
+      authMatches: payload.authUid === uid,
+    });
+
     try {
-      await setDoc(ref, {
-        authUid: uid,
-        playerId: playerId ?? null,
-        profile: profile ?? null,
-        lastSeen: Date.now(),
-        lastSeenSrv: serverTimestamp(),
-        stage,
-      }, { merge: true });
+      await setDoc(ref, payload, { merge: true });
       consecutiveFailures = 0;
       console.info(stage === "start" ? "[PRESENCE] started" : "[PRESENCE] beat", {
         arenaId,
@@ -64,6 +80,17 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
     }
   };
 
+  try {
+    await setDoc(
+      doc(db, "arenas", arenaId, "presence", "__probe__"),
+      { authUid: auth.currentUser?.uid ?? null, at: serverTimestamp(), stage: "probe" },
+      { merge: true },
+    );
+    console.info("[PRESENCE] probe-ok", { path: `arenas/${arenaId}/presence/__probe__` });
+  } catch (e: any) {
+    console.error("[PRESENCE] probe-failed", { code: e?.code, message: e?.message });
+  }
+
   await write("start");
   timer = setInterval(() => {
     void write("beat");
@@ -73,8 +100,11 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
     if (stopped) return;
     stopped = true;
     clearTimer();
-    try { await setDoc(ref, { lastSeen: Date.now(), lastSeenSrv: serverTimestamp(), stage: "stop" }, { merge: true }); }
-    catch (e: any) { console.error("[PRESENCE] stop-failed", { code: e?.code, message: e?.message }); }
+    try {
+      await setDoc(ref, { lastSeen: Date.now(), lastSeenSrv: serverTimestamp(), stage: "stop" }, { merge: true });
+    } catch (e: any) {
+      console.error("[PRESENCE] stop-failed", { code: e?.code, message: e?.message });
+    }
   };
 
   window.addEventListener("beforeunload", stop, { once: true });
