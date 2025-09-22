@@ -186,6 +186,7 @@ export type ArenaPlayerState = {
 
 export interface ArenaInputSnapshot {
   playerId: string;
+  authUid?: string;
   codename?: string;
   left?: boolean;
   right?: boolean;
@@ -684,6 +685,7 @@ const serializeInputSnapshot = (snap: QueryDocumentSnapshot): ArenaInputSnapshot
   const data = snap.data() as Record<string, unknown>;
   return {
     playerId: (data.playerId as string) ?? snap.id,
+    authUid: (data.authUid as string) ?? undefined,
     codename: (data.codename as string) ?? undefined,
     left: typeof data.left === "boolean" ? data.left : undefined,
     right: typeof data.right === "boolean" ? data.right : undefined,
@@ -764,8 +766,10 @@ export async function writeArenaInput(
 ): Promise<void> {
   await ensureAnonAuth();
   const ref = arenaInputDoc(arenaId, playerId);
+  const authUid = auth.currentUser?.uid ?? playerId;
   const payload: Record<string, unknown> = {
     playerId,
+    authUid,
     updatedAt: serverTimestamp(),
   };
   if (typeof input.left === "boolean") payload.left = input.left;
