@@ -114,6 +114,8 @@ export default function ArenaPage() {
     arenaScene.scene.restart(payload);
   }, [sceneBooted, sceneConfig]);
 
+  const permDenied = bootError?.toLowerCase?.().includes("permission") ?? false;
+
   // Non-blocking overlay to surface boot/runtime status
   const overlayState = useMemo(() => {
     if (gameBootError) return { tone: "error" as const, message: `Renderer offline: ${gameBootError}` };
@@ -139,6 +141,23 @@ export default function ArenaPage() {
 
       <section className="card" style={{ marginTop: 24 }}>
         <h2 style={{ marginBottom: 12 }}>Arena Feed</h2>
+        {permDenied && (
+          <div
+            role="status"
+            className="my-3"
+            style={{
+              padding: "8px 12px",
+              fontFamily: "var(--font-mono)",
+              fontSize: "0.85rem",
+              color: "#f87171",
+              border: "1px solid rgba(248,113,113,0.35)",
+              borderRadius: "8px",
+              background: "rgba(15,17,21,0.6)",
+            }}
+          >
+            Arena bootstrap failed (permissions). Gameplay may be local-only.
+          </div>
+        )}
         <div
           className="canvas-frame"
           style={{
@@ -151,7 +170,7 @@ export default function ArenaPage() {
           }}
         >
           <div ref={containerRef} style={{ width: ARENA_WIDTH, height: ARENA_HEIGHT, margin: "0 auto" }} />
-          {overlayState ? (
+          {!permDenied && overlayState ? (
             <div
               style={{
                 position: "absolute",
@@ -170,7 +189,7 @@ export default function ArenaPage() {
                 pointerEvents: "none",
               }}
             >
-              {overlayState.message}
+            {overlayState.message}
             </div>
           ) : null}
         </div>

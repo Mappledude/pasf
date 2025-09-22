@@ -10,6 +10,7 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
   if (!uid) { console.error("[PRESENCE] write-failed", { reason: "no-auth" }); throw new Error("no-auth"); }
   const presenceId = nanoid(10);
   const ref = doc(db, "arenas", arenaId, "presence", presenceId);
+  const path = ref.path;
 
   let timer: ReturnType<typeof setInterval> | undefined;
   let consecutiveFailures = 0;
@@ -33,14 +34,28 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
         stage,
       }, { merge: true });
       consecutiveFailures = 0;
-      if (stage === "start") console.info("[PRESENCE] started", { arenaId, presenceId, uid });
-      else console.info("[PRESENCE] beat", { presenceId });
+      console.info(stage === "start" ? "[PRESENCE] started" : "[PRESENCE] beat", {
+        arenaId,
+        presenceId,
+        uid,
+        path,
+        stage,
+      });
     } catch (e: any) {
       consecutiveFailures += 1;
-      console.error("[PRESENCE] write-failed", { stage, code: e?.code, message: e?.message });
+      console.error("[PRESENCE] write-failed", {
+        stage,
+        code: e?.code,
+        message: e?.message,
+        path,
+        arenaId,
+        presenceId,
+        uid,
+      });
       if (stage === "start") {
         clearTimer();
-        throw e instanceof Error ? e : new Error(String(e ?? "presence-start-failed"));
+        const error = e instanceof Error ? e : new Error(String(e ?? "presence-start-failed"));
+        throw error;
       }
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         console.error("[PRESENCE] heartbeat-stopped", { presenceId, failures: consecutiveFailures });
