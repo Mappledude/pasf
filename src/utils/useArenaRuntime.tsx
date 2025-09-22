@@ -13,12 +13,15 @@ export function useArenaRuntime(arenaId: string, playerId?: string, profile?: { 
   const [presenceId, setPresenceId] = useState<string>();
   const [live, setLive] = useState<LivePresence[]>([]);
   const [stable, setStable] = useState(false);
+  const [bootError, setBootError] = useState<string | null>(null);
   const offRef = useRef<() => void>();
   const stopPresenceRef = useRef<() => Promise<void>>();
   const stopWriterRef = useRef<() => void>();
 
   useEffect(() => {
     let cancelled = false;
+    setBootError(null);
+    setPresenceId(undefined);
     (async () => {
       console.info("[ARENA] boot", { arenaId });
       try {
@@ -32,8 +35,12 @@ export function useArenaRuntime(arenaId: string, playerId?: string, profile?: { 
         }
         setPresenceId(myPresenceId);
         stopPresenceRef.current = stop;
+        setBootError(null);
       } catch (e: any) {
         console.error("[ARENA] boot-failed", { message: String(e?.message ?? e) });
+        if (!cancelled) {
+          setBootError(typeof e?.message === "string" ? e.message : String(e));
+        }
       }
     })();
     return () => {
@@ -101,5 +108,5 @@ export function useArenaRuntime(arenaId: string, playerId?: string, profile?: { 
     };
   }, [arenaId]);
 
-  return { presenceId, live, stable, enqueueInput };
+  return { presenceId, live, stable, enqueueInput, bootError };
 }
