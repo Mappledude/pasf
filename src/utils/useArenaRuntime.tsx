@@ -13,14 +13,36 @@ export function useArenaRuntime(arenaId: string, playerId?: string, profile?: { 
   const [presenceId, setPresenceId] = useState<string>();
   const [live, setLive] = useState<LivePresence[]>([]);
   const [stable, setStable] = useState(false);
+  const [bootError, setBootError] = useState<string>();
+  const [nextRetryAt, setNextRetryAt] = useState<number>();
   const offRef = useRef<() => void>();
   const stopPresenceRef = useRef<() => Promise<void>>();
   const stopWriterRef = useRef<() => void>();
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      console.info("[ARENA] boot", { arenaId });
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+
+    const resetRuntime = () => {
+      setPresenceId(undefined);
+      const stopPresence = stopPresenceRef.current;
+      stopPresenceRef.current = undefined;
+      if (stopPresence) {
+        stopPresence().catch((err) => {
+          console.error("[ARENA] presence-stop-failed", { message: String(err?.message ?? err) });
+        });
+      }
+      if (stopWriterRef.current) {
+        stopWriterRef.current();
+        stopWriterRef.current = undefined;
+      }
+    };
+
+    const boot = async () => {
+      attempt += 1;
+      const attemptInfo = { arenaId, attempt };
+      console.info("[ARENA] boot", attemptInfo);
       try {
         await ensureAnonAuth();
         await ensureArenaFixed(arenaId);
@@ -30,14 +52,40 @@ export function useArenaRuntime(arenaId: string, playerId?: string, profile?: { 
           await stop();
           return;
         }
+        setBootError(undefined);
+        setNextRetryAt(undefined);
         setPresenceId(myPresenceId);
         stopPresenceRef.current = stop;
       } catch (e: any) {
-        console.error("[ARENA] boot-failed", { message: String(e?.message ?? e) });
+        if (cancelled) return;
+        const message = String(e?.message ?? e ?? "unknown-error");
+        setBootError(message);
+        resetRuntime();
+        const retryMs = Math.min(30000, 2000 * attempt);
+        const retryAt = Date.now() + retryMs;
+        setNextRetryAt(retryAt);
+        console.error("[ARENA] boot-failed", { ...attemptInfo, message });
+        console.info("[ARENA] boot-retry", { ...attemptInfo, retryMs });
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => {
+          retryTimer = undefined;
+          if (cancelled) return;
+          boot().catch((err) => {
+            console.error("[ARENA] boot-retry-failed", { message: String(err?.message ?? err) });
+          });
+        }, retryMs);
       }
-    })();
+    };
+
+    resetRuntime();
+    boot().catch((err) => {
+      const message = String(err?.message ?? err ?? "unknown-error");
+      console.error("[ARENA] boot-failed", { arenaId, message });
+      setBootError(message);
+    });
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [arenaId, playerId, profile]);
 
@@ -101,5 +149,5 @@ export function useArenaRuntime(arenaId: string, playerId?: string, profile?: { 
     };
   }, [arenaId]);
 
-  return { presenceId, live, stable, enqueueInput };
+  return { presenceId, live, stable, enqueueInput, bootError, nextRetryAt };
 }
