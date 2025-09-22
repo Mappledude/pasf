@@ -696,7 +696,7 @@ const toMillis = (value: unknown): number => {
       }
     }
   }
-  return Number.NaN;
+  return 0;
 };
 
 export function watchArenaPresence(
@@ -705,25 +705,25 @@ export function watchArenaPresence(
   onChange: (live: LivePresence[]) => void,
 ) {
   return onSnapshot(collection(database, `arenas/${arenaId}/presence`), (snap) => {
-    const now = Date.now();
-    const live = snap.docs
-      .map((docSnap) => {
-        const data = { id: docSnap.id, ...(docSnap.data() as DocumentData) } as Record<string, unknown>;
-        const lastSeenMs = toMillis(data.lastSeen);
-        return {
-          ...data,
-          lastSeen: lastSeenMs,
-        };
-      })
-      .filter((presence) => {
-        const lastSeenMs = typeof presence.lastSeen === "number" ? presence.lastSeen : Number.NaN;
-        if (!Number.isFinite(lastSeenMs)) {
-          return false;
-        }
-        return now - lastSeenMs <= PRESENCE_STALE_MS;
-      }) as LivePresence[];
+    const presences = snap.docs.map((docSnap) => {
+      const data = { id: docSnap.id, ...(docSnap.data() as DocumentData) } as Record<string, unknown>;
+      const lastSeenMs = toMillis(data.lastSeen);
+      return {
+        ...data,
+        lastSeen: lastSeenMs,
+      };
+    });
 
-    console.info("[PRESENCE] live", { live: live.length, all: snap.size });
+    let liveCount = 0;
+    const live = presences.filter((presence) => {
+      const isLive = Date.now() - toMillis(presence.lastSeen) <= PRESENCE_STALE_MS;
+      if (isLive) {
+        liveCount += 1;
+      }
+      return isLive;
+    }) as LivePresence[];
+
+    console.info("[PRESENCE] live", { live: liveCount, all: snap.size });
     onChange(live);
   });
 }
