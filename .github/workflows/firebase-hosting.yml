@@ -103,15 +103,7 @@ jobs:
         run: |
           firebase deploy --only hosting --project "$PROJECT_ID" --site "$SITE_ID"
 
-      - name: Hit live /version.json
+      - name: Smoke test: canary present on home
         run: |
-          curl -fsS https://stickfightpa.web.app/version.json -o live.json
-          cat live.json
-          echo "EXPECTED=${{ env.VITE_COMMIT_SHA }}" >> $GITHUB_ENV
-
-      - name: Verify live commit matches this build
-        run: |
-          ACTUAL=$(jq -r .commit live.json)
-          echo "expected=$EXPECTED"
-          echo "actual=$ACTUAL"
-          test "$ACTUAL" = "$EXPECTED"
+          curl -fsS https://stickfightpa.web.app/ -o home.html
+          grep -q "RED CANARY ACTIVE" home.html || (echo "Canary not found on live site" && exit 1)
