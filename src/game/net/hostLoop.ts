@@ -4,8 +4,10 @@ import {
   watchArenaPresence,
   writeArenaState,
   type ArenaInputSnapshot,
+  type LivePresence,
 } from "../../firebase";
 import type { ArenaPresenceEntry } from "../../types/models";
+import { mapLivePresenceToArenaEntries } from "../../utils/livePresence";
 
 export interface HostLoopOptions {
   arenaId: string;
@@ -104,8 +106,9 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
     return { ...point };
   };
 
-  const handlePresence = (entries: ArenaPresenceEntry[]) => {
+  const handlePresence = (live: LivePresence[]) => {
     if (stopped) return;
+    const entries = mapLivePresenceToArenaEntries(live);
     const now = Date.now();
     const active = new Set<string>();
 
