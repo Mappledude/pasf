@@ -6,6 +6,7 @@ import { AuthProvider } from "./context/AuthContext";
 import "./styles/base.css";
 import { ensureAuth } from "./firebaseAuth";
 import { setupGlobalDebug, dbg, enableDebug } from "./lib/debug";
+import { installConsoleMirror } from "./debug/DebugBus";
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {
@@ -15,6 +16,7 @@ const root = createRoot(rootEl);
 
 // Initialize debug traps early
 setupGlobalDebug();
+installConsoleMirror();
 
 // Optional: force-on in prod while investigating (remove later)
 // enableDebug(true);

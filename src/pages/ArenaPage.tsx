@@ -14,6 +14,7 @@ import {
 import type { LeaderboardEntry } from "../firebase";
 
 import { ARENA_NET_DEBUG, debugLog } from "../net/debug";
+import DebugDock from "../components/DebugDock";
 
 import {
   ensureArenaState,
@@ -123,7 +124,7 @@ export default function ArenaPage() {
     if (!arenaId) return;
     if (arenaMetaLoading) return;
     if (titleLoggedRef.current) return;
-    console.log(`[ARENA] title="${arenaTitle}" id=${arenaId}`);
+    console.info(`[ARENA] title="${arenaTitle}" id=${arenaId}`);
     titleLoggedRef.current = true;
   }, [arenaId, arenaMetaLoading, arenaTitle]);
 
@@ -144,7 +145,7 @@ export default function ArenaPage() {
     const ids = presence.map((entry) => entry.presenceId ?? entry.playerId ?? "");
     rosterLogTimerRef.current = setTimeout(() => {
       const joinedIds = ids.join(", ");
-      console.log(`[PRESENCE] roster stable=${ids.length} ids=[${joinedIds}]`);
+      console.info(`[PRESENCE] roster stable=${ids.length} ids=[${joinedIds}]`);
       debugLog(
         `[ARENA] roster arena=${arenaId} n=${rosterCount} names=${formattedRosterNames}`,
         { rosterNames },
@@ -335,7 +336,7 @@ export default function ArenaPage() {
       const nextDisplayName = await computeDisplayName();
       await joinArena(arenaId, { authUid, presenceId }, codename, profileId, nextDisplayName);
       const safeDisplayName = nextDisplayName.replace(/"/g, '\\"');
-      console.log(
+      console.info(
         `[PRESENCE] joined authUid=${authUid} presenceId=${presenceId} displayName="${safeDisplayName}"`,
       );
     };
@@ -350,7 +351,7 @@ export default function ArenaPage() {
         nextDisplayName,
       );
       const safeDisplayName = nextDisplayName.replace(/"/g, '\\"');
-      console.log(
+      console.info(
         `[HEARTBEAT] lastSeen updated authUid=${authUid} presenceId=${presenceId} displayName="${safeDisplayName}"`,
       );
     };
@@ -489,8 +490,9 @@ export default function ArenaPage() {
   }, [hostLabel, rosterCount, state?.tick, stateReady]);
 
   return (
-    <div className="grid" style={{ gap: 24 }}>
-      <section className="card">
+    <>
+      <div className="grid" style={{ gap: 24 }}>
+        <section className="card">
         <div className="card-header">
           <div className="meta-grid">
             <span className="muted mono">Arena</span>
@@ -623,6 +625,8 @@ export default function ArenaPage() {
         </div>
         <div className="card-footer">[NET] {debugFooter}</div>
       </section>
-    </div>
+      </div>
+      <DebugDock />
+    </>
   );
 }

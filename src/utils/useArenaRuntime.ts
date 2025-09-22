@@ -205,7 +205,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       }, { merge: true })
         .then(() => {
           if (DEBUG) {
-            console.info("[STATE] wrote");
+            console.info("[STATE] wrote", { ents: Object.keys(entities).length, tick: "presence" });
           }
         })
         .catch((error) => {
@@ -406,6 +406,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
 
         game.scene.add("Arena", ArenaScene, true, sceneConfig);
         setGameBooted(true);
+        console.info("[ARENA] ready", { arenaId: arenaId ?? "", scene: arenaId ?? "CLIFF" });
 
         cleanupRef.current = () => {
           if (gameRef.current === game) {
