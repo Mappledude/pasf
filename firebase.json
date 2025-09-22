@@ -7,6 +7,9 @@
     "site": "stickfightpa",
     "public": "dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "headers": [
+      { "source": "/version.json", "headers": [{ "key": "Cache-Control", "value": "no-store" }] }
+    ],
     "rewrites": [{ "source": "**", "destination": "/index.html" }]
   }
 }

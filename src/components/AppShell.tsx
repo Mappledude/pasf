@@ -1,6 +1,8 @@
 import React from "react";
 import { NavLink, Outlet } from "react-router-dom";
 
+import BuildBadge from "./BuildBadge";
+
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   isActive ? "active" : undefined;
 
@@ -27,6 +29,7 @@ const AppShell = () => {
       <footer className="footer">
         <span className="muted">stickfightpa · Firestore · Anonymous auth</span>
       </footer>
+      <BuildBadge />
     </div>
   );
 };
