@@ -2,7 +2,6 @@ import React from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 
 import AppShell from "./components/AppShell";
-import CanaryBadge from "./components/CanaryBadge";
 import HomePage from "./pages/HomePage";
 import AdminPage from "./pages/AdminPage";
 import ArenaPage from "./pages/ArenaPage";
@@ -30,7 +29,6 @@ export default function App() {
           <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>
-      <CanaryBadge />
     </>
   );
 }
