@@ -155,7 +155,7 @@ export default function ArenaPage() {
               background: "rgba(15,17,21,0.6)",
             }}
           >
-            Arena bootstrap failed (permissions). Gameplay may be local-only until rules are fixed.
+            Arena bootstrap failed (permissions). Gameplay may be local-only until rules/App Check are enforced.
           </div>
         )}
         <div
