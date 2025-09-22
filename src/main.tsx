@@ -4,12 +4,15 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import { AuthProvider } from "./context/AuthContext";
 import "./styles/base.css";
+import { ensureAuth } from "./firebaseAuth";
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {
   throw new Error("Missing #root element");
 }
 const root = createRoot(rootEl);
+
+ensureAuth();
 
 root.render(
   <React.StrictMode>

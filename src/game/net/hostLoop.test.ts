@@ -1,14 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { startHostLoop } from "./hostLoop";
-import type { ArenaPresenceEntry } from "../../types/models";
+import type { LivePresence } from "../../lib/presence";
 import type { ArenaInputSnapshot } from "../../firebase";
+
+const { beforeEach, afterEach, vi } = globalThis as any;
 
 // Keep real mocks so we can call .mockClear() and inspect calls.
 const infoMock = vi.fn();
 const errorMock = vi.fn();
 const logger = { info: infoMock, error: errorMock } as unknown as typeof console;
 
-let presenceCallback: ((entries: ArenaPresenceEntry[]) => void) | undefined;
+let presenceCallback: ((entries: LivePresence[]) => void) | undefined;
 let inputsCallback: ((snapshots: ArenaInputSnapshot[]) => void) | undefined;
 
 const writeArenaStateMock = vi.fn(async () => {
@@ -17,12 +19,6 @@ const writeArenaStateMock = vi.fn(async () => {
 
 vi.mock("../../firebase", () => ({
   db: {} as unknown,
-  watchArenaPresence: vi.fn(
-    (_db: unknown, _arenaId: string, cb: (entries: ArenaPresenceEntry[]) => void) => {
-      presenceCallback = cb;
-      return () => undefined;
-    },
-  ),
   watchArenaInputs: vi.fn(
     (_arenaId: string, cb: (snapshots: ArenaInputSnapshot[]) => void) => {
       inputsCallback = cb;
@@ -31,6 +27,13 @@ vi.mock("../../firebase", () => ({
   ),
   writeArenaState: (...args: Parameters<typeof writeArenaStateMock>) =>
     writeArenaStateMock(...args),
+}));
+
+vi.mock("../../lib/presence", () => ({
+  watchArenaPresence: vi.fn((_arenaId: string, cb: (entries: LivePresence[]) => void) => {
+    presenceCallback = cb;
+    return () => undefined;
+  }),
 }));
 
 describe("startHostLoop combat", () => {
@@ -63,19 +66,17 @@ describe("startHostLoop combat", () => {
       const nowIso = new Date().toISOString();
       presenceCallback?.([
         {
+          id: "p1",
           presenceId: "p1",
-          playerId: "p1",
           authUid: "p1",
-          codename: "Alpha",
           lastSeen: nowIso,
-        } as unknown as ArenaPresenceEntry,
+        } as unknown as LivePresence,
         {
+          id: "p2",
           presenceId: "p2",
-          playerId: "p2",
           authUid: "p2",
-          codename: "Beta",
           lastSeen: nowIso,
-        } as unknown as ArenaPresenceEntry,
+        } as unknown as LivePresence,
       ]);
 
       const commands: Record<string, ArenaInputSnapshot> = {
@@ -127,13 +128,13 @@ describe("startHostLoop combat", () => {
       pushInputs();
 
       const hpValues = writeArenaStateMock.mock.calls
-        .map((args) => (args[1] as any)?.entities?.p2?.hp as unknown)
-        .filter((value): value is number => typeof value === "number");
+        .map((args: unknown[]) => (args[1] as any)?.entities?.p2?.hp as unknown)
+        .filter((value: unknown): value is number => typeof value === "number");
 
-      expect(hpValues.some((hp) => hp < 100)).toBe(true);
+      expect(hpValues.some((hp: number) => hp < 100)).toBe(true);
       expect((hpValues[hpValues.length - 1] ?? 100) <= 90).toBe(true);
 
-      const hitLogged = infoMock.mock.calls.some((call) =>
+      const hitLogged = infoMock.mock.calls.some((call: unknown[]) =>
         String(call[0]).includes("[HIT]"),
       );
       expect(hitLogged).toBe(true);

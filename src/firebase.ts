@@ -27,7 +27,6 @@ import {
   type QueryDocumentSnapshot,
   type Unsubscribe,
   type Firestore,
-  type DocumentData,
 } from "firebase/firestore";
 
 // === CONFIG (stickfightpa) ===
@@ -663,98 +662,6 @@ export const watchArenaSeats = (
     cb(seats);
   });
 };
-
-export type LivePresence = {
-  id: string;
-  authUid: string;
-  lastSeen: number;
-  presenceId?: string;
-} & DocumentData;
-
-export const PRESENCE_STALE_MS = 20_000; // lastSeen ≤ 20s
-export const HEARTBEAT_MS = 10_000; // write heartbeat every 10s
-
-const toMillis = (value: unknown): number => {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (value && typeof value === "object") {
-    const maybeTimestamp = value as { toMillis?: () => number; toDate?: () => Date };
-    if (typeof maybeTimestamp.toMillis === "function") {
-      const ms = maybeTimestamp.toMillis();
-      if (typeof ms === "number" && Number.isFinite(ms)) {
-        return ms;
-      }
-    }
-    if (typeof maybeTimestamp.toDate === "function") {
-      const date = maybeTimestamp.toDate();
-      if (date instanceof Date) {
-        const ms = date.getTime();
-        if (Number.isFinite(ms)) {
-          return ms;
-        }
-      }
-    }
-  }
-  return Number.NaN;
-};
-
-export function watchArenaPresence(
-  database: Firestore,
-  arenaId: string,
-  onChange: (live: LivePresence[]) => void,
-) {
-  return onSnapshot(collection(database, `arenas/${arenaId}/presence`), (snap) => {
-    const now = Date.now();
-    const live = snap.docs
-      .map((docSnap) => {
-        const data = { id: docSnap.id, ...(docSnap.data() as DocumentData) } as Record<string, unknown>;
-        const lastSeenMs = toMillis(data.lastSeen);
-        return {
-          ...data,
-          lastSeen: lastSeenMs,
-        };
-      })
-      .filter((presence) => {
-        const lastSeenMs = typeof presence.lastSeen === "number" ? presence.lastSeen : Number.NaN;
-        if (!Number.isFinite(lastSeenMs)) {
-          return false;
-        }
-        return now - lastSeenMs <= PRESENCE_STALE_MS;
-      }) as LivePresence[];
-
-    console.info("[PRESENCE] live", { live: live.length, all: snap.size });
-    onChange(live);
-  });
-}
-
-export function startPresenceHeartbeat(
-  database: Firestore,
-  arenaId: string,
-  presenceId: string,
-  authUid: string,
-) {
-  const ref = doc(database, `arenas/${arenaId}/presence/${presenceId}`);
-  let timer: ReturnType<typeof setInterval> | null = null;
-
-  const tick = async () => {
-    try {
-      await setDoc(
-        ref,
-        { presenceId, authUid, lastSeen: Date.now() },
-        { merge: true },
-      );
-    } catch (error) {
-      console.info("[PRESENCE] heartbeat error", error);
-    }
-  };
-
-  void tick();
-  timer = setInterval(tick, HEARTBEAT_MS);
-  return () => {
-    if (timer) clearInterval(timer);
-  };
-}
 
 const arenaStateDoc = (arenaId: string) =>
   doc(db, "arenas", arenaId, "state", "current");

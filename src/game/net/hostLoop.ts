@@ -1,11 +1,5 @@
-import {
-  db,
-  watchArenaInputs,
-  watchArenaPresence,
-  writeArenaState,
-  type ArenaInputSnapshot,
-  type LivePresence,
-} from "../../firebase";
+import { db, watchArenaInputs, writeArenaState, type ArenaInputSnapshot } from "../../firebase";
+import { watchArenaPresence, type LivePresence } from "../../lib/presence";
 import type { ArenaPresenceEntry } from "../../types/models";
 import { mapLivePresenceToArenaEntries } from "../../utils/livePresence";
 
@@ -117,7 +111,13 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
       const authUid = entry.authUid ?? entry.playerId;
       if (!presenceId || !authUid) continue;
 
-      const parsedLastSeen = entry.lastSeen ? Date.parse(entry.lastSeen) : Number.NaN;
+      const rawLastSeen = entry.lastSeen;
+      const parsedLastSeen =
+        typeof rawLastSeen === "number"
+          ? rawLastSeen
+          : rawLastSeen
+          ? Date.parse(rawLastSeen)
+          : Number.NaN;
       const lastSeenMs = Number.isFinite(parsedLastSeen) ? parsedLastSeen : Number.NaN;
       if (!Number.isFinite(lastSeenMs)) continue;
       if (now - lastSeenMs > ONLINE_WINDOW_MS) continue;
@@ -352,7 +352,7 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
     }
   };
 
-  presenceUnsub = watchArenaPresence(db, options.arenaId, handlePresence);
+  presenceUnsub = watchArenaPresence(options.arenaId, handlePresence);
   inputsUnsub = watchArenaInputs(options.arenaId, handleInputs);
 
   timer = setInterval(() => {

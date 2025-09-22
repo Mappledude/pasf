@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { doc, getDoc, type FirestoreError, type Unsubscribe } from "firebase/firestore";
-import { ensureAnonAuth, watchArenaPresence, db, type LivePresence } from "../firebase";
+import { ensureAnonAuth, db } from "../firebase";
+import { watchArenaPresence, type LivePresence } from "../lib/presence";
 import { useAuth } from "../context/AuthContext";
 import type { ArenaPresenceEntry } from "../types/models";
 import { isPresenceEntryActive } from "./presenceThresholds";
@@ -164,7 +165,7 @@ export function useArenaPresence(arenaId?: string): UseArenaPresenceResult {
         setError(null);
         await ensureAnonAuth();
         if (cancelled) return;
-        unsub = watchArenaPresence(db, arenaId, (live: LivePresence[]) => {
+        unsub = watchArenaPresence(arenaId, (live: LivePresence[]) => {
           if (cancelled) return;
           const currentGen = ++generation;
           latestEntries = filterActiveEntries(mapLivePresenceToArenaEntries(live));

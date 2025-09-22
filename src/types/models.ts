@@ -29,7 +29,7 @@ export interface ArenaPresenceEntry {
   joinedAt?: string;
   authUid?: string;
   profileId?: string;
-  lastSeen?: string;
+  lastSeen?: string | number;
   expireAt?: string;
 }
 
