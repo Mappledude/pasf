@@ -898,7 +898,7 @@ export interface ArenaInputWrite {
 
 export async function writeArenaInput(
   arenaId: string,
-  input: ArenaInputWrite
+  input: ArenaInputWrite,
 ): Promise<void> {
   await ensureAnonAuth();
 
@@ -910,17 +910,25 @@ export async function writeArenaInput(
     playerId: input.presenceId,
     presenceId: input.presenceId,
     authUid: uid, // satisfies rules: request.resource.data.authUid == request.auth.uid
-    left: input.left,
-    right: input.right,
-    jump: input.jump,
-    attack: input.attack,
-    codename: input.codename,
-    attackSeq: input.attackSeq,
     updatedAt: serverTimestamp(),
   };
 
+// assumes: ref: DocumentReference, input: any, payload: Record<string, unknown>
+{
+  // stamp only known, correctly-typed fields
+  if (typeof input.authUid === "string" && input.authUid.length > 0) {
+    payload.authUid = input.authUid;
+  }
+  if (typeof input.left === "boolean") payload.left = input.left;
+  if (typeof input.right === "boolean") payload.right = input.right;
+  if (typeof input.jump === "boolean") payload.jump = input.jump;
+  if (typeof input.attack === "boolean") payload.attack = input.attack;
+  if (typeof input.attackSeq === "number") payload.attackSeq = input.attackSeq;
+  if (typeof input.codename === "string" && input.codename) payload.codename = input.codename;
+
   await setDoc(ref, payload, { merge: true });
 }
+
 export async function deleteArenaInput(arenaId: string, presenceId: string): Promise<void> {
   await ensureAnonAuth();
   const ref = arenaInputDoc(arenaId, presenceId);
