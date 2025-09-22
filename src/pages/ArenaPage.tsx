@@ -60,6 +60,10 @@ export default function ArenaPage() {
   const authUidRef = useRef<string | null>(null);
   const presenceIdRef = useRef<string | null>(null);
   const rosterLogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const renderIdRef = useRef(0);
+  const joinRunIdCounterRef = useRef(0);
+  const completedJoinRunIdsRef = useRef<Set<number>>(new Set());
+  const currentJoinKeyRef = useRef<string | null>(null);
 
   const {
     players: presence,
@@ -264,22 +268,36 @@ export default function ArenaPage() {
     };
   }, [arenaId, authReady, user?.uid]);
 
+  renderIdRef.current += 1;
+  const renderId = renderIdRef.current;
+  const authUidSnapshot = authUidRef.current;
+  const presenceIdSnapshot = presenceIdRef.current;
+  const joinKeySnapshot =
+    arenaId && authUidSnapshot && presenceIdSnapshot
+      ? `${arenaId}::${authUidSnapshot}::${presenceIdSnapshot}`
+      : null;
+  currentJoinKeyRef.current = joinKeySnapshot;
+
   useEffect(() => {
     if (!arenaId) return;
     if (!authReady) {
       debugLog("[PRESENCE] join skipped: auth not ready", { arenaId });
       return;
     }
-    const authUid = authUidRef.current;
+    const authUid = authUidSnapshot;
     if (!authUid) {
       debugLog("[PRESENCE] join skipped: missing auth uid", { arenaId });
       return;
     }
-    const presenceId = presenceIdRef.current;
+    const presenceId = presenceIdSnapshot;
     if (!presenceId) {
       debugLog("[PRESENCE] join skipped: missing presenceId", { arenaId, authUid });
       return;
     }
+
+    const effectJoinKey = joinKeySnapshot;
+    const effectRenderId = renderId;
+    const joinRunId = ++joinRunIdCounterRef.current;
 
     const codename = player?.codename ?? authUid.slice(0, 6);
     const profileId = player?.id;
@@ -345,6 +363,7 @@ export default function ArenaPage() {
         if (cancelled) return;
 
         debugLog("[PRESENCE] join complete", { arenaId, authUid, presenceId });
+        completedJoinRunIdsRef.current.add(joinRunId);
 
         debugLog("[PRESENCE] heartbeat schedule", {
           arenaId,
@@ -376,10 +395,28 @@ export default function ArenaPage() {
       if (heartbeat) {
         clearInterval(heartbeat);
       }
-      debugLog("[PRESENCE] leaveArena", { arenaId, authUid, presenceId });
-      leaveArena(arenaId, presenceId).catch((e) => {
-        debugWarn("[PRESENCE] leave failed", e);
-      });
+      const joined = completedJoinRunIdsRef.current.has(joinRunId);
+      const latestRenderId = renderIdRef.current;
+      const upcomingJoinKey = currentJoinKeyRef.current;
+      const hasNewerRender = latestRenderId > effectRenderId;
+      const identityChanged = effectJoinKey !== upcomingJoinKey;
+
+      if (joined && (!hasNewerRender || identityChanged)) {
+        debugLog("[PRESENCE] leaveArena", { arenaId, authUid, presenceId });
+        leaveArena(arenaId, presenceId).catch((e) => {
+          debugWarn("[PRESENCE] leave failed", e);
+        });
+      } else if (ARENA_NET_DEBUG && joined) {
+        debugLog("[PRESENCE] leave skipped", {
+          arenaId,
+          authUid,
+          presenceId,
+          hasNewerRender,
+          identityChanged,
+        });
+      }
+
+      completedJoinRunIdsRef.current.delete(joinRunId);
     };
   }, [
     arenaId,
