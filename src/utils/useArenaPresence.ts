@@ -163,7 +163,7 @@ export function useArenaPresence(arenaId?: string): UseArenaPresenceResult {
         setError(null);
         await ensureAnonAuth();
         if (cancelled) return;
-        unsub = watchArenaPresence(arenaId, (entries) => {
+        unsub = watchArenaPresence(db, arenaId, (entries) => {
           if (cancelled) return;
           const currentGen = ++generation;
           latestEntries = filterActiveEntries(entries);

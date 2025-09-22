@@ -1,4 +1,5 @@
 import {
+  db,
   watchArenaInputs,
   watchArenaPresence,
   writeArenaState,
@@ -348,7 +349,7 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
     }
   };
 
-  presenceUnsub = watchArenaPresence(options.arenaId, handlePresence);
+  presenceUnsub = watchArenaPresence(db, options.arenaId, handlePresence);
   inputsUnsub = watchArenaInputs(options.arenaId, handleInputs);
 
   timer = setInterval(() => {
