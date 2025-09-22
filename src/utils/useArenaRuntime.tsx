@@ -88,6 +88,10 @@ export function useArenaRuntime(
           console.warn("[ARENA] seed-skipped", { message: String(seedErr?.message ?? seedErr) });
         }
 
+        if (cancelled) {
+          return;
+        }
+
         setBootError(null);
         setNextRetryAt(undefined);
         console.info("[ARENA] boot-ready", { arenaId, presenceId: myPresenceId });
@@ -121,6 +125,12 @@ export function useArenaRuntime(
     return () => {
       cancelled = true;
       clearRetryTimer();
+
+      const stopPresence = stopPresenceRef.current;
+      stopPresenceRef.current = undefined;
+      if (stopPresence) {
+        void stopPresence();
+      }
     };
   }, [arenaId, playerId, profile]);
 
