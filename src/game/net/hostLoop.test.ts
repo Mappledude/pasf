@@ -16,8 +16,9 @@ const writeArenaStateMock = vi.fn(async () => {
 });
 
 vi.mock("../../firebase", () => ({
+  db: {} as unknown,
   watchArenaPresence: vi.fn(
-    (_arenaId: string, cb: (entries: ArenaPresenceEntry[]) => void) => {
+    (_db: unknown, _arenaId: string, cb: (entries: ArenaPresenceEntry[]) => void) => {
       presenceCallback = cb;
       return () => undefined;
     },

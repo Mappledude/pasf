@@ -26,6 +26,8 @@ import {
   runTransaction,
   type QueryDocumentSnapshot,
   type Unsubscribe,
+  type Firestore,
+  type DocumentData,
 } from "firebase/firestore";
 
 // === CONFIG (stickfightpa) ===
@@ -418,15 +420,16 @@ export const getArena = async (arenaId: string): Promise<Arena | null> => {
   } as Arena;
 };
 
-export const joinArena = async (
+async function joinArenaWithDb(
+  database: Firestore,
   arenaId: string,
   ids: { authUid: string; presenceId: string },
   codename: string,
   profileId?: string,
   displayName?: string | null,
-) => {
+) {
   const { authUid, presenceId } = ids;
-  const ref = doc(db, `arenas/${arenaId}/presence/${presenceId}`);
+  const ref = doc(database, `arenas/${arenaId}/presence/${presenceId}`);
   const trimmedDisplayName =
     typeof displayName === "string" && displayName.trim().length > 0 ? displayName.trim() : null;
   const playerId = profileId ?? presenceId;
@@ -473,17 +476,26 @@ export const joinArena = async (
     ...baseData,
     ...heartbeatData,
   });
-};
+}
 
-export const heartbeatArenaPresence = async (
+export const joinArena = async (
   arenaId: string,
   ids: { authUid: string; presenceId: string },
   codename: string,
   profileId?: string,
   displayName?: string | null,
-) => {
+) => joinArenaWithDb(db, arenaId, ids, codename, profileId, displayName);
+
+async function heartbeatArenaPresenceWithDb(
+  database: Firestore,
+  arenaId: string,
+  ids: { authUid: string; presenceId: string },
+  codename: string,
+  profileId?: string,
+  displayName?: string | null,
+) {
   const { authUid, presenceId } = ids;
-  const ref = doc(db, `arenas/${arenaId}/presence/${presenceId}`);
+  const ref = doc(database, `arenas/${arenaId}/presence/${presenceId}`);
   const trimmedDisplayName =
     typeof displayName === "string" && displayName.trim().length > 0 ? displayName.trim() : null;
   const playerId = profileId ?? presenceId;
@@ -519,7 +531,16 @@ export const heartbeatArenaPresence = async (
     }
     throw error;
   }
-};
+}
+
+export const heartbeatArenaPresence = async (
+  arenaId: string,
+  ids: { authUid: string; presenceId: string },
+  codename: string,
+  profileId?: string,
+  displayName?: string | null,
+) =>
+  heartbeatArenaPresenceWithDb(db, arenaId, ids, codename, profileId, displayName);
 
 export const leaveArena = async (arenaId: string, presenceId: string) => {
   await deleteDoc(doc(db, `arenas/${arenaId}/presence/${presenceId}`));
@@ -643,51 +664,139 @@ export const watchArenaSeats = (
   });
 };
 
+type PresenceDocumentShape = {
+  playerId?: unknown;
+  codename?: unknown;
+  displayName?: unknown;
+  authUid?: unknown;
+  profileId?: unknown;
+  joinedAt?: unknown;
+  lastSeen?: unknown;
+  expireAt?: unknown;
+};
+
+const normalizePresenceString = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const readPresenceTimestamp = (value: unknown): ISODate | undefined => {
+  if (!value || typeof value !== "object") return undefined;
+  const date = (value as { toDate?: () => Date }).toDate?.();
+  return date?.toISOString();
+};
+
+export interface LivePresence extends ArenaPresenceEntry {}
+
+const toLivePresence = (snap: QueryDocumentSnapshot<DocumentData>): LivePresence => {
+  const data = snap.data() as PresenceDocumentShape;
+  const presenceId = snap.id;
+  const playerId = normalizePresenceString(data.playerId) ?? presenceId;
+  const codename = normalizePresenceString(data.codename) ?? "Agent";
+  const displayName = normalizePresenceString(data.displayName);
+  const authUid = normalizePresenceString(data.authUid) ?? presenceId;
+  const profileId = normalizePresenceString(data.profileId);
+
+  return {
+    presenceId,
+    playerId,
+    codename,
+    displayName,
+    joinedAt: readPresenceTimestamp(data.joinedAt),
+    authUid,
+    profileId,
+    lastSeen: readPresenceTimestamp(data.lastSeen),
+    expireAt: readPresenceTimestamp(data.expireAt),
+  };
+};
+
 export const watchArenaPresence = (
+  database: Firestore,
   arenaId: string,
-  cb: (players: ArenaPresenceEntry[]) => void,
+  cb: (players: LivePresence[]) => void,
 ): Unsubscribe => {
   const presenceRef = query(
-    collection(db, `arenas/${arenaId}/presence`),
+    collection(database, `arenas/${arenaId}/presence`),
     orderBy("joinedAt", "asc"),
   );
   return onSnapshot(presenceRef, (snapshot) => {
-    const players = snapshot.docs.map((docSnap) => {
-      const data = docSnap.data() as any;
-      const presenceId = docSnap.id;
-      const displayName =
-        typeof data.displayName === "string" && data.displayName.trim().length > 0
-          ? data.displayName.trim()
-          : undefined;
-      const authUid =
-        typeof data.authUid === "string" && data.authUid.trim().length > 0
-          ? data.authUid.trim()
-          : undefined;
-      return {
-return {
-  presenceId: docSnap.id,                  // ✅ doc id on READ
-  playerId: data.playerId ?? docSnap.id,
-  codename: data.codename ?? "Agent",
-  displayName,
-  joinedAt: data.joinedAt?.toDate?.().toISOString?.(),
-  authUid: typeof data.authUid === "string" ? data.authUid : undefined, // ✅ read from data
-  profileId: data.profileId,
-  lastSeen: data.lastSeen?.toDate?.().toISOString?.(),
-  expireAt: data.expireAt?.toDate?.().toISOString?.(),
-} as ArenaPresenceEntry;
-        playerId: data.playerId ?? docSnap.id,
-        codename: data.codename ?? "Agent",
-        displayName,
-        joinedAt: data.joinedAt?.toDate?.().toISOString?.(),
-        authUid: authUid ?? presenceId,
-        profileId: data.profileId,
-        lastSeen: data.lastSeen?.toDate?.().toISOString?.(),
-        expireAt: data.expireAt?.toDate?.().toISOString?.(),
-      } as ArenaPresenceEntry;
-    });
-    cb(players);
+    cb(snapshot.docs.map((docSnap) => toLivePresence(docSnap)));
   });
 };
+
+export interface PresenceHeartbeatOptions {
+  arenaId: string;
+  ids: { authUid: string; presenceId: string };
+  codename: string;
+  profileId?: string;
+  displayName?: string | null;
+  intervalMs?: number;
+  logger?: Pick<typeof console, "warn" | "info" | "error">;
+}
+
+export function startPresenceHeartbeat(
+  database: Firestore,
+  options: PresenceHeartbeatOptions,
+): () => void {
+  const { arenaId, ids, codename, profileId, displayName } = options;
+  const intervalMs = Math.max(1_000, options.intervalMs ?? 20_000);
+  const logger = options.logger ?? console;
+
+  let stopped = false;
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  const runHeartbeat = async () => {
+    if (stopped) return;
+    try {
+      await heartbeatArenaPresenceWithDb(
+        database,
+        arenaId,
+        ids,
+        codename,
+        profileId,
+        displayName ?? null,
+      );
+    } catch (error) {
+      logger.warn?.(
+        `[PRESENCE] heartbeat tick failed for arena=${arenaId} presence=${ids.presenceId}`,
+        error,
+      );
+    }
+  };
+
+  (async () => {
+    try {
+      await joinArenaWithDb(
+        database,
+        arenaId,
+        ids,
+        codename,
+        profileId,
+        displayName ?? null,
+      );
+      if (stopped) return;
+      await runHeartbeat();
+      if (stopped) return;
+      timer = setInterval(() => {
+        void runHeartbeat();
+      }, intervalMs);
+    } catch (error) {
+      logger.warn?.(
+        `[PRESENCE] failed to start heartbeat for arena=${arenaId} presence=${ids.presenceId}`,
+        error,
+      );
+    }
+  })();
+
+  return () => {
+    stopped = true;
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
+}
 
 const arenaStateDoc = (arenaId: string) =>
   doc(db, "arenas", arenaId, "state", "current");
@@ -804,6 +913,9 @@ export async function writeArenaInput(
     updatedAt: serverTimestamp(),
   };
 
+// assumes: ref: DocumentReference, input: any, payload: Record<string, unknown>
+{
+  // stamp only known, correctly-typed fields
   if (typeof input.authUid === "string" && input.authUid.length > 0) {
     payload.authUid = input.authUid;
   }
@@ -812,7 +924,7 @@ export async function writeArenaInput(
   if (typeof input.jump === "boolean") payload.jump = input.jump;
   if (typeof input.attack === "boolean") payload.attack = input.attack;
   if (typeof input.attackSeq === "number") payload.attackSeq = input.attackSeq;
-  if (input.codename) payload.codename = input.codename;
+  if (typeof input.codename === "string" && input.codename) payload.codename = input.codename;
 
   await setDoc(ref, payload, { merge: true });
 }
