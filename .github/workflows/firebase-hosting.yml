@@ -1,4 +1,4 @@
-name: Deploy to Firebase Hosting (Golden)
+name: Deploy to Firebase Hosting (Minimal)
 
 on:
   push:
@@ -10,22 +10,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          # no cache unless you add a lockfile later
+          # no caching until a lockfile is committed
 
-      - name: Install dependencies (no-lockfile-safe)
+      - name: Install dependencies (no lockfile safe)
         run: npm install --no-audit --no-fund
 
       - name: Type check (fast fail)
@@ -47,13 +48,8 @@ jobs:
       - name: Write /dist/version.json (no cache)
         run: |
           mkdir -p dist
-          cat > dist/version.json <<'JSON'
-          {
-            "commit": "${{ env.VITE_COMMIT_SHA }}",
-            "short": "${{ env.VITE_COMMIT_SHORT }}",
-            "builtAt": "${{ env.VITE_BUILD_TIME }}"
-          }
-          JSON
+          printf '{\n  "commit": "%s",\n  "short": "%s",\n  "builtAt": "%s"\n}\n' \
+            "${VITE_COMMIT_SHA}" "${VITE_COMMIT_SHORT}" "${VITE_BUILD_TIME}" > dist/version.json
 
       - name: Upload build artifact (dist/)
         uses: actions/upload-artifact@v4
@@ -65,77 +61,49 @@ jobs:
         run: npm i -g firebase-tools@14
 
       - name: Write service account creds
-        run: echo "$FIREBASE_SERVICE_ACCOUNT_STICKFIGHTPA" > $RUNNER_TEMP/gcp.json
+        run: echo "$FIREBASE_SERVICE_ACCOUNT_STICKFIGHTPA" > "$RUNNER_TEMP/gcp.json"
         env:
           FIREBASE_SERVICE_ACCOUNT_STICKFIGHTPA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STICKFIGHTPA }}
 
       - name: Deploy LIVE to Hosting site
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp.json
-        run: |
-          firebase deploy --only hosting --project stickfightpa --site stickfightpa --non-interactive
+        run: firebase deploy --only hosting --project stickfightpa --site stickfightpa --non-interactive
 
-      - name: Smoke test LIVE (retry up to 6× with no-cache)
-        id: smoke
-        shell: bash
+      - name: Smoke test LIVE (retry up to 6×)
         run: |
           set -euo pipefail
           URL_HOME="https://stickfightpa.web.app/"
           URL_VER="https://stickfightpa.web.app/version.json"
-
-          attempt() {
-            i="$1"
-            echo "Attempt $i: fetching home + version..."
-            curl -fsS -L -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' "$URL_HOME" -o home.html || return 1
-            curl -fsS -L -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' "$URL_VER" -o live.json || true
-
-            echo "--- Home head (first 200 chars) ---"
-            head -c 200 home.html || true
-            echo; echo "-----------------------------------"
-
-            # Canary check (either RED CANARY ACTIVE present OR version.json commit match)
-            CANARY_OK=1
-            if grep -q "RED CANARY ACTIVE" home.html; then
-              echo "Found red canary text in home.html"
-              CANARY_OK=0
-            elif [ -s live.json ]; then
-              LIVE_SHA=$(python3 - <<'PY'
-import json,sys
-try:
-  print(json.load(open("live.json")).get("commit",""))
-except Exception as e:
-  print("")
-PY
-)
-              echo "Expected: ${VITE_COMMIT_SHA}"
-              echo "Live:     ${LIVE_SHA}"
-              if [ "$LIVE_SHA" = "${VITE_COMMIT_SHA}" ]; then
-                echo "version.json commit matches."
-                CANARY_OK=0
-              fi
-            fi
-
-            return $CANARY_OK
-          }
-
+          ok=0
           for i in 1 2 3 4 5 6; do
-            if attempt "$i"; then
-              echo "SMOKE_OK=1" >> $GITHUB_OUTPUT
-              exit 0
+            echo "Attempt $i..."
+            curl -fsSL -H 'Cache-Control: no-cache' -o home.html "$URL_HOME" || true
+            curl -fsSL -H 'Cache-Control: no-cache' -o live.json "$URL_VER" || true
+            if grep -q "RED CANARY ACTIVE" home.html; then
+              echo "Found RED CANARY ACTIVE in home.html"
+              ok=1; break
             fi
-            echo "Canary not visible yet; sleeping 8s..."
+            LIVE_SHA=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('live.json','utf8')).commit||'')}catch(e){console.log('')}")
+            echo "Expected: ${VITE_COMMIT_SHA}"
+            echo "Live:     ${LIVE_SHA}"
+            if [ "$LIVE_SHA" = "${VITE_COMMIT_SHA}" ]; then
+              echo "version.json commit matches."
+              ok=1; break
+            fi
+            echo "Not live yet; sleeping 8s..."
             sleep 8
           done
+          if [ "$ok" != "1" ]; then
+            echo "Canary check failed after retries"
+            exit 1
+          fi
 
-          echo "SMOKE_OK=0" >> $GITHUB_OUTPUT
-          echo "Canary check failed after retries."
-          exit 1
-
-      - name: Upload LIVE HTML on failure
-        if: failure() || steps.smoke.outputs.SMOKE_OK != '1'
+      - name: Upload LIVE responses (always)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: live-response-${{ env.VITE_COMMIT_SHORT }}
+          name: live-${{ env.VITE_COMMIT_SHORT }}
           path: |
             home.html
             live.json
