@@ -4,7 +4,7 @@ import Phaser from "phaser";
 import { makeGame } from "../game/phaserGame";
 import ArenaScene, { type ArenaSceneConfig } from "../game/arena/ArenaScene";
 import { startHostLoop, type HostLoopController } from "../game/net/hostLoop";
-import { initActionBus, disposeActionBus } from "../net/ActionBus";
+import { initInputPublisher, disposeInputPublisher } from "../net/InputPublisher";
 import { createKeyBinder } from "../game/input/KeyBinder";
 import type { ArenaPresenceEntry } from "../types/models";
 import { writeArenaWriter } from "../firebase";
@@ -190,7 +190,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       keyBinderRef.current = null;
     }
 
-    disposeActionBus();
+    disposeInputPublisher();
     setGameBooted(false);
   }, []);
 
@@ -230,7 +230,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
   // ActionBus lifecycle (session-scoped presenceId)
   useEffect(() => {
     if (!shouldBoot || !arenaId || !meUid || !myPresenceId) {
-      disposeActionBus();
+      disposeInputPublisher();
       return;
     }
 
@@ -239,7 +239,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
 
     (async () => {
       try {
-        await initActionBus({
+        await initInputPublisher({
           arenaId,
           presenceId: myPresenceId,
           codename: playerCodename,
@@ -253,7 +253,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
 
     return () => {
       cancelled = true;
-      disposeActionBus();
+      disposeInputPublisher();
     };
   }, [arenaId, codename, meUid, myPresenceId, shouldBoot]);
 

@@ -1,4 +1,4 @@
-import { publishInput } from "../../net/ActionBus";
+import { publishInput } from "../../net/InputPublisher";
 
 export type InputKey = "left" | "right" | "up" | "jump" | "attack1" | "attack2";
 

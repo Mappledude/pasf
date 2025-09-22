@@ -1,4 +1,4 @@
-import { publishInput } from "../../net/ActionBus";
+import { publishInput } from "../../net/InputPublisher";
 import { createArenaPeerService, type ArenaPeerService, type ArenaStateSnapshot } from "./arenaSync";
 
 export type AuthoritativeSnapshot = ArenaStateSnapshot;

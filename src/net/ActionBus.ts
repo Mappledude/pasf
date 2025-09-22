@@ -1,76 +1,65 @@
-import { deleteArenaInput, writeArenaInput, type ArenaInputWrite } from "../firebase";
+// src/net/ActionBus.ts
+import type { Firestore } from "firebase/firestore";
+import { addDoc, collection } from "firebase/firestore";
+import type { FirebaseApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
+import { db, app } from "../firebase";
 
-const THROTTLE_MS = 60;
 
-export interface PlayerInput {
+export type InputPayload = {
+  type: string;
   left?: boolean;
   right?: boolean;
   jump?: boolean;
   attack?: boolean;
-  codename?: string;
   attackSeq?: number;
-}
-
-interface NormalizedInput {
-  left: boolean;
-  right: boolean;
-  jump: boolean;
-  attack: boolean;
-  attackSeq: number;
-}
-
-interface InitOptions {
-  arenaId: string;
-  presenceId: string;   // per-tab session id
   codename?: string;
-}
-
-interface ActionBusState {
-  arenaId: string;
-  presenceId: string;   // per-tab session id
-  codename?: string;
-  ready: boolean;
-  lastSendAt: number;
-  lastSentPayload?: NormalizedInput;
-  latestInput: NormalizedInput;
-  pendingPayload?: NormalizedInput;
-  pendingTimer?: ReturnType<typeof setTimeout>;
-}
-
-let busState: ActionBusState | null = null;
-
-const defaultInput: NormalizedInput = {
-  left: false,
-  right: false,
-  jump: false,
-  attack: false,
-  attackSeq: 0,
+  [k: string]: unknown;
 };
 
-function normalizeInput(input: PlayerInput, base: NormalizedInput): NormalizedInput {
-  return {
-    left: typeof input.left === "boolean" ? input.left : base.left,
-    right: typeof input.right === "boolean" ? input.right : base.right,
-    jump: typeof input.jump === "boolean" ? input.jump : base.jump,
-    attack: typeof input.attack === "boolean" ? input.attack : base.attack,
-    attackSeq: typeof input.attackSeq === "number" ? input.attackSeq : base.attackSeq,
+/**
+ * Enqueue a player input under:
+ *   arenas/{arenaId}/inputs/{presenceId}/events
+ * Stamps authUid + clientTs. Host loop validates & applies.
+ */
+export async function writeArenaInput(
+  db: Firestore,
+  app: FirebaseApp,
+  arenaId: string,
+  presenceId: string,
+  input: InputPayload
+): Promise<void> {
+  const authUid = getAuth(app).currentUser?.uid;
+  if (!authUid) throw new Error("no-auth");
+
+  const events = collection(db, "arenas", arenaId, "inputs", presenceId, "events");
+  const payload: Record<string, unknown> = {
+    type: input.type,
+    presenceId,
+    authUid,
+    clientTs: Date.now(),
+    applied: false,
   };
-}
 
-function cloneNormalized(input: NormalizedInput): NormalizedInput {
-  return { ...input };
-}
+  if (typeof input.left === "boolean") payload.left = input.left;
+  if (typeof input.right === "boolean") payload.right = input.right;
+  if (typeof input.jump === "boolean") payload.jump = input.jump;
+  if (typeof input.attack === "boolean") payload.attack = input.attack;
+  if (typeof input.attackSeq === "number") payload.attackSeq = input.attackSeq;
+  if (typeof input.codename === "string" && input.codename) payload.codename = input.codename;
 
-function inputsEqual(a?: NormalizedInput, b?: NormalizedInput): boolean {
-  if (!a || !b) return false;
-  return (
-    a.left === b.left &&
-    a.right === b.right &&
-    a.jump === b.jump &&
-    a.attack === b.attack &&
-    a.attackSeq === b.attackSeq
-  );
+  await addDoc(events, payload);
+  console.info("[INPUT] enqueue", { presenceId, type: input.type });
 }
+type ArenaInputWrite = {
+  presenceId: string;
+  left?: boolean;
+  right?: boolean;
+  jump?: boolean;
+  attack?: boolean;
+  attackSeq?: number;
+  codename?: string;
+};
 
 function toWritePayload(state: ActionBusState, input: NormalizedInput): ArenaInputWrite {
   return {
@@ -92,16 +81,15 @@ async function sendInput(state: ActionBusState, payload: NormalizedInput) {
   try {
     const seq = payload.attackSeq;
     console.info("[INPUT] write", { presenceId: state.presenceId, seq });
-    await writeArenaInput(state.arenaId, toWritePayload(state, payload));
+    // FIXED: pass db & app to match writeArenaInput signature
+    await writeArenaInput(db, app, state.arenaId, state.presenceId, toWritePayload(state, payload));
   } catch (error) {
     console.warn("[INPUT] rejected", { presenceId: state.presenceId, error });
   }
 }
 
 function scheduleSend(state: ActionBusState, payload: NormalizedInput) {
-  if (!state.ready) {
-    return;
-  }
+  if (!state.ready) return;
 
   const nextPayload = cloneNormalized(payload);
 
@@ -129,9 +117,7 @@ function scheduleSend(state: ActionBusState, payload: NormalizedInput) {
 
   state.pendingPayload = nextPayload;
 
-  if (state.pendingTimer) {
-    return;
-  }
+  if (state.pendingTimer) return;
 
   const delay = Math.max(THROTTLE_MS - elapsed, 0);
 
@@ -145,13 +131,9 @@ function scheduleSend(state: ActionBusState, payload: NormalizedInput) {
 
     const pending = state.pendingPayload;
     state.pendingPayload = undefined;
-    if (!pending) {
-      return;
-    }
+    if (!pending) return;
 
-    if (inputsEqual(pending, state.lastSentPayload)) {
-      return;
-    }
+    if (inputsEqual(pending, state.lastSentPayload)) return;
 
     void sendInput(state, pending);
   }, delay);
@@ -183,9 +165,7 @@ export async function initActionBus(options: InitOptions): Promise<void> {
 
 export function publishInput(input: PlayerInput): void {
   const state = busState;
-  if (!state || !state.ready) {
-    return;
-  }
+  if (!state || !state.ready) return;
 
   if (typeof input.codename === "string" && input.codename) {
     state.codename = input.codename;
@@ -193,9 +173,7 @@ export function publishInput(input: PlayerInput): void {
 
   const current = state.latestInput;
   const next = normalizeInput(input, current);
-  if (inputsEqual(current, next)) {
-    return;
-  }
+  if (inputsEqual(current, next)) return;
 
   state.latestInput = next;
   scheduleSend(state, next);
@@ -203,9 +181,7 @@ export function publishInput(input: PlayerInput): void {
 
 export function resetActionBus(): void {
   const state = busState;
-  if (!state) {
-    return;
-  }
+  if (!state) return;
 
   if (state.pendingTimer) {
     clearTimeout(state.pendingTimer);
@@ -221,9 +197,7 @@ export function resetActionBus(): void {
 
 export function disposeActionBus(): void {
   const state = busState;
-  if (!state) {
-    return;
-  }
+  if (!state) return;
 
   state.ready = false;
 
@@ -239,3 +213,4 @@ export function disposeActionBus(): void {
     console.warn("[INPUT] delete failed", { presenceId, error });
   });
 }
+
