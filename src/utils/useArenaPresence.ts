@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { doc, getDoc, type FirestoreError, type Unsubscribe } from "firebase/firestore";
-import { ensureAnonAuth, watchArenaPresence, db } from "../firebase";
+import { ensureAnonAuth, watchArenaPresence, db, type LivePresence } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import type { ArenaPresenceEntry } from "../types/models";
 import { isPresenceEntryActive } from "./presenceThresholds";
+import { mapLivePresenceToArenaEntries } from "./livePresence";
 
 const presenceDisplayNameCache = new Map<string, string>();
 const loggedPresenceDisplayNames = new Set<string>();
@@ -163,10 +164,10 @@ export function useArenaPresence(arenaId?: string): UseArenaPresenceResult {
         setError(null);
         await ensureAnonAuth();
         if (cancelled) return;
-        unsub = watchArenaPresence(db, arenaId, (entries) => {
+        unsub = watchArenaPresence(db, arenaId, (live: LivePresence[]) => {
           if (cancelled) return;
           const currentGen = ++generation;
-          latestEntries = filterActiveEntries(entries);
+          latestEntries = filterActiveEntries(mapLivePresenceToArenaEntries(live));
           scheduleFlush();
           const missingIds = collectMissingPlayerIds(latestEntries);
           if (!missingIds.length) {

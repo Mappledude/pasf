@@ -664,137 +664,57 @@ export const watchArenaSeats = (
   });
 };
 
-type PresenceDocumentShape = {
-  playerId?: unknown;
-  codename?: unknown;
-  displayName?: unknown;
-  authUid?: unknown;
-  profileId?: unknown;
-  joinedAt?: unknown;
-  lastSeen?: unknown;
-  expireAt?: unknown;
-};
+export type LivePresence = {
+  id: string;
+  authUid: string;
+  lastSeen: number;
+  presenceId?: string;
+} & DocumentData;
 
-const normalizePresenceString = (value: unknown): string | undefined => {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-};
+export const PRESENCE_STALE_MS = 20_000; // lastSeen ≤ 20s
+export const HEARTBEAT_MS = 10_000; // write heartbeat every 10s
 
-const readPresenceTimestamp = (value: unknown): ISODate | undefined => {
-  if (!value || typeof value !== "object") return undefined;
-  const date = (value as { toDate?: () => Date }).toDate?.();
-  return date?.toISOString();
-};
-
-export interface LivePresence extends ArenaPresenceEntry {}
-
-const toLivePresence = (snap: QueryDocumentSnapshot<DocumentData>): LivePresence => {
-  const data = snap.data() as PresenceDocumentShape;
-  const presenceId = snap.id;
-  const playerId = normalizePresenceString(data.playerId) ?? presenceId;
-  const codename = normalizePresenceString(data.codename) ?? "Agent";
-  const displayName = normalizePresenceString(data.displayName);
-  const authUid = normalizePresenceString(data.authUid) ?? presenceId;
-  const profileId = normalizePresenceString(data.profileId);
-
-  return {
-    presenceId,
-    playerId,
-    codename,
-    displayName,
-    joinedAt: readPresenceTimestamp(data.joinedAt),
-    authUid,
-    profileId,
-    lastSeen: readPresenceTimestamp(data.lastSeen),
-    expireAt: readPresenceTimestamp(data.expireAt),
-  };
-};
-
-export const watchArenaPresence = (
+export function watchArenaPresence(
   database: Firestore,
   arenaId: string,
-  cb: (players: LivePresence[]) => void,
-): Unsubscribe => {
-  const presenceRef = query(
-    collection(database, `arenas/${arenaId}/presence`),
-    orderBy("joinedAt", "asc"),
-  );
-  return onSnapshot(presenceRef, (snapshot) => {
-    cb(snapshot.docs.map((docSnap) => toLivePresence(docSnap)));
-  });
-};
+  onChange: (live: LivePresence[]) => void,
+) {
+  return onSnapshot(collection(database, `arenas/${arenaId}/presence`), (snap) => {
+    const now = Date.now();
+    const live = snap.docs
+      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as DocumentData) }))
+      .filter((presence: any) => now - (presence.lastSeen ?? 0) <= PRESENCE_STALE_MS) as LivePresence[];
 
-export interface PresenceHeartbeatOptions {
-  arenaId: string;
-  ids: { authUid: string; presenceId: string };
-  codename: string;
-  profileId?: string;
-  displayName?: string | null;
-  intervalMs?: number;
-  logger?: Pick<typeof console, "warn" | "info" | "error">;
+    console.info(`[PRESENCE] live=${live.length} all=${snap.size}`);
+    onChange(live);
+  });
 }
 
 export function startPresenceHeartbeat(
   database: Firestore,
-  options: PresenceHeartbeatOptions,
-): () => void {
-  const { arenaId, ids, codename, profileId, displayName } = options;
-  const intervalMs = Math.max(1_000, options.intervalMs ?? 20_000);
-  const logger = options.logger ?? console;
-
-  let stopped = false;
+  arenaId: string,
+  presenceId: string,
+  authUid: string,
+) {
+  const ref = doc(database, `arenas/${arenaId}/presence/${presenceId}`);
   let timer: ReturnType<typeof setInterval> | null = null;
 
-  const runHeartbeat = async () => {
-    if (stopped) return;
+  const tick = async () => {
     try {
-      await heartbeatArenaPresenceWithDb(
-        database,
-        arenaId,
-        ids,
-        codename,
-        profileId,
-        displayName ?? null,
+      await setDoc(
+        ref,
+        { presenceId, authUid, lastSeen: Date.now() },
+        { merge: true },
       );
     } catch (error) {
-      logger.warn?.(
-        `[PRESENCE] heartbeat tick failed for arena=${arenaId} presence=${ids.presenceId}`,
-        error,
-      );
+      console.info("[PRESENCE] heartbeat error", error);
     }
   };
 
-  (async () => {
-    try {
-      await joinArenaWithDb(
-        database,
-        arenaId,
-        ids,
-        codename,
-        profileId,
-        displayName ?? null,
-      );
-      if (stopped) return;
-      await runHeartbeat();
-      if (stopped) return;
-      timer = setInterval(() => {
-        void runHeartbeat();
-      }, intervalMs);
-    } catch (error) {
-      logger.warn?.(
-        `[PRESENCE] failed to start heartbeat for arena=${arenaId} presence=${ids.presenceId}`,
-        error,
-      );
-    }
-  })();
-
+  void tick();
+  timer = setInterval(tick, HEARTBEAT_MS);
   return () => {
-    stopped = true;
-    if (timer) {
-      clearInterval(timer);
-      timer = null;
-    }
+    if (timer) clearInterval(timer);
   };
 }
 
