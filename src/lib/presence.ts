@@ -7,6 +7,7 @@ import {
   Timestamp,
   type DocumentData,
 } from "firebase/firestore";
+import { dbg } from "./debug";
 
 const PRESENCE_STALE_MS = 20_000;  // lastSeen ≤ 20s
 const HEARTBEAT_MS = 10_000;
@@ -33,6 +34,7 @@ export function watchArenaPresence(arenaId: string, onChange: (live: LivePresenc
       .map(d => ({ id: d.id, ...(d.data() as any) }))
       .filter(p => (now - toMillis(p.lastSeen)) <= PRESENCE_STALE_MS) as LivePresence[];
     console.info("[PRESENCE] live", { live: live.length, all: snap.size });
+    dbg("presence:live", { arenaId, live: live.length, all: snap.size });
     onChange(live);
   });
 }
@@ -47,6 +49,7 @@ export function startPresenceHeartbeat(arenaId: string, presenceId: string, auth
       { merge: true },
     );
     console.info("[PRESENCE] beat", { presenceId });
+    dbg("presence:beat", { arenaId, presenceId });
   };
 
   let timer: ReturnType<typeof setInterval> | null = null;

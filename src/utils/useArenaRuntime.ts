@@ -10,6 +10,7 @@ import { createKeyBinder } from "../game/input/KeyBinder";
 import type { ArenaPresenceEntry } from "../types/models";
 import { db, writeArenaWriter } from "../firebase";
 import { startPresenceHeartbeat, watchArenaPresence, type LivePresence } from "../lib/presence";
+import { dbg } from "../lib/debug";
 
 const DEBUG = import.meta.env.DEV && import.meta.env.VITE_DEBUG_ARENA_PAGE === "true";
 const ONLINE_WINDOW_MS = 20_000;
@@ -434,6 +435,11 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
   const isWriter = Boolean(meUid && writerUid && writerUid === meUid);
 
   useEffect(() => {
+    if (!arenaId || !myPresenceId) return;
+    dbg("writer:election", { arenaId, me: myPresenceId, isWriter, live: livePresence.length });
+  }, [arenaId, isWriter, livePresence.length, myPresenceId]);
+
+  useEffect(() => {
     if (!shouldBoot || !arenaId || !meUid) {
       if (hostLoopRef.current) {
         hostLoopRef.current.stop();
@@ -507,6 +513,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       if (data) {
         console.info("[STATE] snapshot", { ts: (data as { ts?: unknown }).ts });
       }
+      dbg("state:snapshot", { arenaId, hasData: !!data, ts: (data as { ts?: unknown })?.ts });
     });
   }, [arenaId]);
 
