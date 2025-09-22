@@ -84,6 +84,10 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
   const intervalMs = Math.max(1, Math.round(1000 / tickRate));
   const logger = options.log ?? console;
 
+  const writerStartPayload = { arenaId: options.arenaId, hz: tickRate };
+  console.info("[WRITER] start", writerStartPayload);
+  logger.info?.("[WRITER] start", writerStartPayload);
+
   let stopped = false;
   let busy = false;
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -106,6 +110,14 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
     const entries = mapLivePresenceToArenaEntries(live);
     const now = Date.now();
     const active = new Set<string>();
+
+    console.info(
+      "[PRESENCE] live",
+      entries.map((entry) => ({
+        id: entry.presenceId ?? entry.playerId ?? "",
+        dn: entry.displayName ?? entry.codename ?? "",
+      })),
+    );
 
     for (const entry of entries) {
       const presenceId = entry.presenceId ?? entry.playerId;
@@ -173,6 +185,7 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
     for (const snapshot of snapshots) {
       const presenceId = snapshot.presenceId;
       if (!presenceId) {
+        console.info("[INPUT] rejected", { presenceId: null, reason: "missing_presenceId" });
         logger.info?.(`[INPUT] rejected {presenceId=?, reason=missing_presenceId}`);
         dbg("input:rejected", { arenaId: options.arenaId, presenceId, reason: "missing_presenceId" });
         continue;
@@ -180,18 +193,26 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
 
       const info = presenceIndex.get(presenceId);
       if (!info) {
+        console.info("[INPUT] rejected", { presenceId, reason: "presence_offline" });
         logger.info?.(`[INPUT] rejected {presenceId=${presenceId}, reason=presence_offline}`);
         dbg("input:rejected", { arenaId: options.arenaId, presenceId, reason: "presence_offline" });
         continue;
       }
 
       if (!snapshot.authUid) {
+        console.info("[INPUT] rejected", { presenceId, reason: "missing_auth" });
         logger.info?.(`[INPUT] rejected {presenceId=${presenceId}, reason=missing_auth}`);
         dbg("input:rejected", { arenaId: options.arenaId, presenceId, reason: "missing_auth" });
         continue;
       }
 
       if (snapshot.authUid !== info.authUid) {
+        console.info("[INPUT] rejected", {
+          presenceId,
+          reason: "auth_mismatch",
+          expected: info.authUid,
+          got: snapshot.authUid,
+        });
         logger.info?.(
           `[INPUT] rejected {presenceId=${presenceId}, reason=auth_mismatch expected=${info.authUid} got=${snapshot.authUid}}`,
         );
@@ -319,6 +340,7 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
 
           target.hp = Math.max(0, target.hp - ATTACK_DAMAGE);
           fighter.hitTargets.add(target.presenceId);
+          console.info("[HIT] apply", { from: fighter.presenceId, to: target.presenceId, dmg: ATTACK_DAMAGE });
           logger.info?.(
             `[HIT] attacker=${fighter.presenceId} target=${target.presenceId} hp=${target.hp} damage=${ATTACK_DAMAGE}`,
           );
@@ -357,8 +379,8 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
         entities: Object.keys(snapshot.entities ?? {}),
       });
       await writeArenaState(options.arenaId, snapshot);
+      console.info("[STATE] wrote", { ents: fighters.size, tick });
       logger.info?.(`[ARENA] writer=${options.writerAuthUid} tick=${tick}`);
-      logger.info?.(`[STATE] entities=${fighters.size}`);
     } catch (error) {
       logger.error?.("[hostLoop] step error", error);
     } finally {
@@ -398,6 +420,8 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
         inputsUnsub = null;
       }
       presenceIndex.clear();
+      console.info("[WRITER] stop", { arenaId: options.arenaId });
+      logger.info?.("[WRITER] stop", { arenaId: options.arenaId });
       logger.info?.("[hostLoop] stopped", { arenaId: options.arenaId });
     },
   };

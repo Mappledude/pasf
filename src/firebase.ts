@@ -733,7 +733,10 @@ export function watchArenaPresence(
       })
       .filter((p) => now - p.lastSeen <= PRESENCE_STALE_MS);
 
-    console.info("[PRESENCE] live", { live: live.length, all: snap.size });
+    console.info(
+      "[PRESENCE] live",
+      live.map((p) => ({ id: p.id ?? p.playerId ?? "", dn: p.displayName ?? p.codename ?? "" })),
+    );
     dbg("presence:live", { arenaId, live: live.length, all: snap.size });
     onChange(live);
   });

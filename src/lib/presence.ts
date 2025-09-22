@@ -33,7 +33,10 @@ export function watchArenaPresence(arenaId: string, onChange: (live: LivePresenc
     const live = snap.docs
       .map(d => ({ id: d.id, ...(d.data() as any) }))
       .filter(p => (now - toMillis(p.lastSeen)) <= PRESENCE_STALE_MS) as LivePresence[];
-    console.info("[PRESENCE] live", { live: live.length, all: snap.size });
+    console.info(
+      "[PRESENCE] live",
+      live.map((p) => ({ id: p.id ?? p.playerId ?? "", dn: p.displayName ?? p.codename ?? "" })),
+    );
     dbg("presence:live", { arenaId, live: live.length, all: snap.size });
     onChange(live);
   });

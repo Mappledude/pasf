@@ -47,5 +47,5 @@ export async function writeArenaInput(
   if (typeof input.codename === "string" && input.codename) payload.codename = input.codename;
 
   await addDoc(events, payload);
-  console.info("[INPUT] enqueue", { presenceId, type: input.type });
+  console.info("[INPUT] enqueued", { presenceId, type: input.type });
 }

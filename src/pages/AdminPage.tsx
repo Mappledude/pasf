@@ -10,6 +10,7 @@ import {
 import type { PlayerProfile } from "../types/models";
 import { useArenas } from "../utils/useArenas";
 import { useAuth } from "../context/AuthContext";
+import DebugDock from "../components/DebugDock";
 
 const extractErrorMessage = (error: unknown) => {
   if (error instanceof Error && error.message) return error.message;
@@ -132,14 +133,15 @@ const AdminPage = () => {
   }, [loading, status]);
 
   return (
-    <div className="grid" style={{ gap: 24 }}>
-      <div
-        className={`status-bar${statusTone === "error" ? " error" : ""}`}
-        role="status"
-        aria-live="polite"
-      >
-        {statusMessage}
-      </div>
+    <>
+      <div className="grid" style={{ gap: 24 }}>
+        <div
+          className={`status-bar${statusTone === "error" ? " error" : ""}`}
+          role="status"
+          aria-live="polite"
+        >
+          {statusMessage}
+        </div>
 
       <div className="grid grid-2" style={{ alignItems: "start", gap: 24 }}>
         <div className="grid" style={{ gap: 24 }}>
@@ -313,7 +315,9 @@ const AdminPage = () => {
           </section>
         </div>
       </div>
-    </div>
+      </div>
+      <DebugDock />
+    </>
   );
 };
 
