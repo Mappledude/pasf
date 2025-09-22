@@ -5,35 +5,32 @@ service cloud.firestore {
 
     match /arenas/{arenaId} {
       allow read: if true;
-      allow create, update: if authed();
+      allow create, update: if authed(); // arena metadata
 
-      // Per-tab presence shard
-      match /presence/{presenceId} {
-        allow read: if true;
-        allow create, update, delete: if authed()
-          && request.resource.data.authUid == request.auth.uid;
-      }
-
-      // Inputs fan-in: inputs/{presenceId}/events/{eventId}
-      match /inputs/{presenceId}/events/{eventId} {
-        allow read: if true;
-        allow create: if authed()
-          && request.resource.data.authUid == request.auth.uid;
-      }
-
-      // State writer (host). Keep permissive for now.
+      // Host-authoritative state (writer elected in app)
       match /state/{docId} {
         allow read: if true;
         allow write: if authed();
       }
 
-      match /seats/{seatNo} {
-        allow read: if authed();
-        allow create: if authed() && request.resource.data.uid == request.auth.uid;
-        allow update: if authed()
-          && resource.data.uid == request.auth.uid
-          && request.resource.data.uid == request.auth.uid;
-        allow delete: if authed() && resource.data.uid == request.auth.uid;
+      // Session-scoped presence (per-tab)
+      match /presence/{presenceId} {
+        allow read: if true;
+        // TEMP: allow any authed client to create/update/delete its presence doc.
+        // After we confirm, we can tighten to require authUid match.
+        allow create, update, delete: if authed();
+        // Tighter version for later:
+        // allow create, update, delete: if authed() &&
+        //   request.resource.data.authUid == request.auth.uid;
+      }
+
+      // Inputs fan-in: inputs/{presenceId}/events/{eventId}
+      match /inputs/{presenceId}/events/{eventId} {
+        allow read: if true;
+        allow create: if authed();
+        // Tighter later:
+        // allow create: if authed() &&
+        //   request.resource.data.authUid == request.auth.uid;
       }
     }
 
