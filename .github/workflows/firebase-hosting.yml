@@ -14,6 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set build metadata
+        run: |
+          echo "VITE_COMMIT_SHA=${GITHUB_SHA}" >> $GITHUB_ENV
+          echo "VITE_COMMIT_SHORT=${GITHUB_SHA::7}" >> $GITHUB_ENV
+          echo "VITE_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -29,6 +35,21 @@ jobs:
 
       - run: npm ci
       - run: npm run build
+        env:
+          VITE_COMMIT_SHA: ${{ env.VITE_COMMIT_SHA }}
+          VITE_COMMIT_SHORT: ${{ env.VITE_COMMIT_SHORT }}
+          VITE_BUILD_TIME: ${{ env.VITE_BUILD_TIME }}
+
+      - name: Write /dist/version.json (no cache)
+        run: |
+          mkdir -p dist
+          cat > dist/version.json <<'JSON'
+          {
+            "commit": "${{ env.VITE_COMMIT_SHA }}",
+            "short": "${{ env.VITE_COMMIT_SHORT }}",
+            "builtAt": "${{ env.VITE_BUILD_TIME }}"
+          }
+          JSON
 
       - name: Install firebase-tools
         run: npm i -g firebase-tools@14
@@ -46,3 +67,16 @@ jobs:
           SITE_ID: ${{ vars.FIREBASE_SITE || 'stickfightpa' }}
         run: |
           firebase deploy --only hosting --project "$PROJECT_ID" --site "$SITE_ID"
+
+      - name: Hit live /version.json
+        run: |
+          curl -fsS https://stickfightpa.web.app/version.json -o live.json
+          cat live.json
+          echo "EXPECTED=${{ env.VITE_COMMIT_SHA }}" >> $GITHUB_ENV
+
+      - name: Verify live commit matches this build
+        run: |
+          ACTUAL=$(jq -r .commit live.json)
+          echo "expected=$EXPECTED"
+          echo "actual=$ACTUAL"
+          test "$ACTUAL" = "$EXPECTED"
