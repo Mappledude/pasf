@@ -1,0 +1,3 @@
+/* Canary: force all text red so deploys are obvious */
+html, body, #root { color: #ff0000 !important; }
+* { color: #ff0000 !important; }
