@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { doc, getDoc, type FirestoreError, type Unsubscribe } from "firebase/firestore";
-import { ensureAnonAuth, db } from "../firebase";
+import { ensureAnonAuth } from "../auth/ensureAnonAuth";
+import { db } from "../firebase";
 import { watchArenaPresence, type LivePresence } from "../lib/presence";
 import { useAuth } from "../context/AuthContext";
 import type { ArenaPresenceEntry } from "../types/models";

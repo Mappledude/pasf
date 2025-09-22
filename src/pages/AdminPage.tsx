@@ -1,10 +1,10 @@
 import React, { FormEvent, useEffect, useMemo, useState } from "react";
+import { ensureAnonAuth } from "../auth/ensureAnonAuth";
 import {
   createArena,
   createPlayer,
   ensureBossProfile,
   listPlayers,
-  ensureAnonAuth,
   normalizePasscode,
 } from "../firebase";
 import type { PlayerProfile } from "../types/models";

@@ -1,4 +1,3 @@
-import { app, db } from "../firebase";
 import { writeArenaInput, type InputPayload } from "./ActionBus";
 import { dbg } from "../lib/debug";
 
@@ -88,7 +87,7 @@ const flushPending = (next: NormalizedInput) => {
     presenceId: context.presenceId,
     type: payload.type,
   });
-  void writeArenaInput(db, app, context.arenaId, context.presenceId, payload).catch((error) => {
+  void writeArenaInput(context.arenaId, context.presenceId, payload).catch((error) => {
     console.warn("[INPUT] enqueue failed", error);
   });
 };

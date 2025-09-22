@@ -9,7 +9,7 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 
-import { ensureAnonAuth } from "../firebase";
+import { ensureAnonAuth } from "../auth/ensureAnonAuth";
 
 export type ArenaState = {
   tick: number;
@@ -83,8 +83,8 @@ export async function touchPlayer(
   arenaId: string,
   initHp = 100
 ) {
-  const user = await ensureAnonAuth();
-  console.info("[ARENA] touchPlayer", { arenaId, uid: user.uid });
+  const uid = await ensureAnonAuth();
+  console.info("[ARENA] touchPlayer", { arenaId, uid });
   const ref = arenaStateRef(db, arenaId);
   await setDoc(
     ref,
@@ -93,5 +93,5 @@ export async function touchPlayer(
     },
     { merge: true }
   );
-  console.info("[ARENA] touchPlayer: updated", { arenaId, uid: user.uid });
+  console.info("[ARENA] touchPlayer: updated", { arenaId, uid });
 }

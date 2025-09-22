@@ -27,7 +27,6 @@ import {
   type QueryDocumentSnapshot,
   type Unsubscribe,
   type Firestore,
-  type DocumentData, // ← add this
 } from "firebase/firestore";
 import { dbg } from "./lib/debug";
 
@@ -687,87 +686,48 @@ export const watchArenaSeats = (
 export type LivePresence = {
   id: string;
   authUid: string;
-  lastSeen: number;  // milliseconds
-  presenceId?: string;
-} & DocumentData;
-
-export const PRESENCE_STALE_MS = 20_000; // lastSeen ≤ 20s
-export const HEARTBEAT_MS = 10_000;      // write heartbeat every 10s
-
-const toMillis = (value: unknown): number => {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-
-  if (value && typeof value === "object") {
-    const t = value as { toMillis?: () => number; toDate?: () => Date };
-    try {
-      if (typeof t.toMillis === "function") {
-        const ms = t.toMillis();
-        if (typeof ms === "number" && Number.isFinite(ms)) return ms;
-      }
-      if (typeof t.toDate === "function") {
-        const d = t.toDate();
-        const ms = d?.getTime?.();
-        if (typeof ms === "number" && Number.isFinite(ms)) return ms;
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  return 0;
+  playerId?: string;
+  lastSeen: number;
+  displayName: string;
 };
 
-export function watchArenaPresence(
-  database: Firestore,
-  arenaId: string,
-  onChange: (live: LivePresence[]) => void,
-) {
-  return onSnapshot(collection(database, `arenas/${arenaId}/presence`), (snap) => {
+export const resolveDisplayName = (
+  profile?: { displayName?: string } | null,
+  player?: { name?: string } | null,
+  uid?: string | null
+) => {
+  if (profile?.displayName) return profile.displayName;
+  if (player?.name) return player.name;
+  const tail = (uid ?? "").slice(-2) || "??";
+  return `Player ${tail}`;
+};
+
+export const watchArenaPresence = (arenaId: string, onChange: (live: LivePresence[]) => void) => {
+  const presenceRef = collection(doc(db, "arenas", arenaId), "presence");
+  return onSnapshot(presenceRef, async (snap) => {
     const now = Date.now();
-
-    const live = snap.docs
-      .map((docSnap) => {
-        const data = docSnap.data() as DocumentData;
-        const lastSeen = toMillis((data as any).lastSeen);
-        return { id: docSnap.id, ...(data as any), lastSeen } as LivePresence;
+    const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+    const liveRaw = rows.filter((r) => now - Number(r.lastSeen ?? 0) <= 20_000);
+    const cache = new Map<string, any>();
+    await Promise.all(
+      liveRaw.map(async (r) => {
+        if (r.playerId && !cache.has(r.playerId)) {
+          const ps = await getDoc(doc(db, "players", r.playerId));
+          cache.set(r.playerId, ps.exists() ? ps.data() : null);
+        }
       })
-      .filter((p) => now - p.lastSeen <= PRESENCE_STALE_MS);
-
-    console.info(
-      "[PRESENCE] live",
-      live.map((p) => ({ id: p.id ?? p.playerId ?? "", dn: p.displayName ?? p.codename ?? "" })),
     );
-    dbg("presence:live", { arenaId, live: live.length, all: snap.size });
+    const live = liveRaw.map((r) => ({
+      id: r.id,
+      authUid: r.authUid ?? "",
+      playerId: r.playerId,
+      lastSeen: Number(r.lastSeen ?? 0),
+      displayName: resolveDisplayName(r.profile ?? null, cache.get(r.playerId) ?? null, r.authUid ?? null),
+    }));
+    console.info("[PRESENCE] live", live.map((p) => ({ id: p.id, dn: p.displayName })));
     onChange(live);
   });
-}
-
-export function startPresenceHeartbeat(
-  database: Firestore,
-  arenaId: string,
-  presenceId: string,
-  authUid: string,
-) {
-  const ref = doc(database, `arenas/${arenaId}/presence/${presenceId}`);
-  const tick = async () => {
-    try {
-      // WRITE A NUMBER for lastSeen → easier live filtering
-      await setDoc(
-        ref,
-        { presenceId, authUid, lastSeen: Date.now(), expireAt: Timestamp.fromMillis(Date.now() + 60_000) },
-        { merge: true },
-      );
-      console.info("[PRESENCE] beat", { presenceId });
-      dbg("presence:beat", { arenaId, presenceId });
-    } catch (error) {
-      console.info("[PRESENCE] heartbeat error", error);
-    }
-  };
-
-  void tick();
-  const timer = setInterval(tick, HEARTBEAT_MS);
-  return () => clearInterval(timer);
-}
+};
 
 const arenaStateDoc = (arenaId: string) =>
   doc(db, "arenas", arenaId, "state", "current");

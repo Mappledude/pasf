@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FirestoreError, Unsubscribe } from "firebase/firestore";
-import { ensureAnonAuth, watchArenaSeats } from "../firebase";
+import { ensureAnonAuth } from "../auth/ensureAnonAuth";
+import { watchArenaSeats } from "../firebase";
 import type { ArenaSeatAssignment } from "../types/models";
 
 interface UseArenaSeatsResult {
