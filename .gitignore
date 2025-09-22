@@ -5,3 +5,4 @@ node_modules
 .idea
 dist
 dist-tests
+.firebase/hosting.*.cache
