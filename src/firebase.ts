@@ -789,7 +789,7 @@ export interface ArenaInputWrite {
 
 export async function writeArenaInput(
   arenaId: string,
-  input: ArenaInputWrite
+  input: ArenaInputWrite,
 ): Promise<void> {
   await ensureAnonAuth();
 
@@ -801,21 +801,9 @@ export async function writeArenaInput(
     playerId: input.presenceId,
     presenceId: input.presenceId,
     authUid: uid, // satisfies rules: request.resource.data.authUid == request.auth.uid
-    left: input.left,
-    right: input.right,
-    jump: input.jump,
-    attack: input.attack,
-    codename: input.codename,
-    attackSeq: input.attackSeq,
     updatedAt: serverTimestamp(),
   };
 
-  await setDoc(ref, payload, { merge: true });
-}
-
-
-    updatedAt: serverTimestamp(),
-  };
   if (typeof input.authUid === "string" && input.authUid.length > 0) {
     payload.authUid = input.authUid;
   }
@@ -825,6 +813,7 @@ export async function writeArenaInput(
   if (typeof input.attack === "boolean") payload.attack = input.attack;
   if (typeof input.attackSeq === "number") payload.attackSeq = input.attackSeq;
   if (input.codename) payload.codename = input.codename;
+
   await setDoc(ref, payload, { merge: true });
 }
 
