@@ -29,41 +29,15 @@ service cloud.firestore {
         allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
       }
 
-      // Presence subcollection (existing)
-      match /presence/{playerId} {
-        function hasMatchingAuthUid() {
-          return request.resource != null
-            && request.resource.data.authUid == request.auth.uid;
-        }
-
-        function hasValidTimestamps() {
-          return request.resource != null
-            && request.resource.data.lastSeen is timestamp
-            && request.resource.data.expireAt is timestamp
-            && request.resource.data.lastSeen >= request.time - duration.value(5, "minutes")
-            && request.resource.data.lastSeen <= request.time
-            && request.resource.data.expireAt >= request.time
-            && request.resource.data.expireAt <= request.time + duration.value(10, "minutes");
-        }
-
-        allow read: if isSignedIn();
-        allow create, update: if isSignedIn() && hasMatchingAuthUid() && hasValidTimestamps();
-        allow delete: if isSignedIn()
-          && resource != null
-          && resource.data.authUid == request.auth.uid;
+      match /presence/{presenceId} {
+        allow read: if true;
+        allow write: if request.auth != null;
       }
     }
 
-    // IMPORTANT: arena state docs live at /arenas/{arenaId}/state/{stateId}
-    match /arenas/{arenaId}/state/{stateId} {
-      function hasMatchingWriterUid() {
-        return (request.resource != null && request.resource.data.writerUid == request.auth.uid)
-          || (resource != null && resource.data.writerUid == request.auth.uid);
-      }
-
-      allow read: if isSignedIn();
-      allow write: if isSignedIn()
-        && (stateId != "current" || hasMatchingWriterUid());
+    match /arenas/{arenaId}/state/{docId} {
+      allow read: if true;
+      allow write: if request.auth != null;
     }
 
     // Players (existing)

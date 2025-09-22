@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Phaser from "phaser";
+import { doc, onSnapshot, setDoc } from "firebase/firestore";
 
 import { makeGame } from "../game/phaserGame";
 import ArenaScene, { type ArenaSceneConfig } from "../game/arena/ArenaScene";
@@ -7,10 +8,12 @@ import { startHostLoop, type HostLoopController } from "../game/net/hostLoop";
 import { initInputPublisher, disposeInputPublisher } from "../net/InputPublisher";
 import { createKeyBinder } from "../game/input/KeyBinder";
 import type { ArenaPresenceEntry } from "../types/models";
-import { writeArenaWriter } from "../firebase";
+import { db, writeArenaWriter } from "../firebase";
+import { startPresenceHeartbeat, watchArenaPresence, type LivePresence } from "../lib/presence";
 
 const DEBUG = import.meta.env.DEV && import.meta.env.VITE_DEBUG_ARENA_PAGE === "true";
 const ONLINE_WINDOW_MS = 20_000;
+const PRESENCE_WRITER_TICK_MS = 1000 / 12;
 
 interface ActivePresenceInfo {
   presenceId: string;
@@ -33,6 +36,9 @@ export interface UseArenaRuntimeOptions {
 
 export interface UseArenaRuntimeResult {
   gameBooted: boolean;
+  presenceId: string | null;
+  isWriter: boolean;
+  liveCount: number;
 }
 
 function destroyGame(game: Phaser.Game | null) {
@@ -68,6 +74,8 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
   const [gameBooted, setGameBooted] = useState(false);
   const writerLogRef = useRef<string | null>(null);
   const writerPersistRef = useRef<string | null>(null);
+  const [livePresence, setLivePresence] = useState<LivePresence[]>([]);
+  const presenceWriterRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ---- Presence bookkeeping ----
 
@@ -78,6 +86,24 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
 
   const myPresenceId = myPresenceEntry?.presenceId ?? null;
 
+  useEffect(() => {
+    if (!arenaId) return;
+    if (!myPresenceId) return;
+    if (!meUid) return;
+    const stop = startPresenceHeartbeat(arenaId, myPresenceId, meUid);
+    return () => {
+      stop?.();
+    };
+  }, [arenaId, meUid, myPresenceId]);
+
+  useEffect(() => {
+    if (!arenaId) {
+      setLivePresence([]);
+      return;
+    }
+    return watchArenaPresence(arenaId, setLivePresence);
+  }, [arenaId]);
+
   const activePresence = useMemo(() => {
     const now = Date.now();
     const map = new Map<string, ActivePresenceInfo>();
@@ -86,7 +112,13 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       const authUid = entry.authUid ?? entry.playerId;
       if (!presenceId || !authUid) continue;
 
-      const lastSeenMs = entry.lastSeen ? Date.parse(entry.lastSeen) : Number.NaN;
+      const rawLastSeen = entry.lastSeen;
+      const lastSeenMs =
+        typeof rawLastSeen === "number"
+          ? rawLastSeen
+          : rawLastSeen
+          ? Date.parse(rawLastSeen)
+          : Number.NaN;
       if (!Number.isFinite(lastSeenMs)) continue;
       if (now - lastSeenMs > ONLINE_WINDOW_MS) continue;
 
@@ -104,6 +136,14 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     }
     return map;
   }, [activePresence]);
+
+  const presenceWriterId = useMemo(() => {
+    if (!livePresence.length) return null;
+    const sorted = [...livePresence].sort((a, b) => (a.id ?? "").localeCompare(b.id ?? ""));
+    return sorted[0]?.id ?? null;
+  }, [livePresence]);
+
+  const isPresenceWriter = Boolean(myPresenceId && presenceWriterId && presenceWriterId === myPresenceId);
 
   // ---- Writer election (prefer state, fall back to lexicographic) ----
 
@@ -133,6 +173,55 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       console.info(`[WRITER] elected ${logKey}`);
     }
   }, [arenaId, electedWriterUid]);
+
+  useEffect(() => {
+    if (!arenaId) return;
+    if (!isPresenceWriter) {
+      if (presenceWriterRef.current) {
+        clearInterval(presenceWriterRef.current);
+        presenceWriterRef.current = null;
+      }
+      return;
+    }
+    if (presenceWriterRef.current) {
+      return;
+    }
+
+    if (DEBUG) {
+      console.info("[WRITER] presence elected", { presenceId: myPresenceId });
+    }
+
+    presenceWriterRef.current = setInterval(() => {
+      const entities = livePresence.reduce<Record<string, { id: string }>>((acc, p) => {
+        if (!p.id) return acc;
+        acc[p.id] = { id: p.id };
+        return acc;
+      }, {});
+
+      setDoc(doc(db, "arenas", arenaId, "state", "current"), {
+        entities,
+        ts: Date.now(),
+      }, { merge: true })
+        .then(() => {
+          if (DEBUG) {
+            console.info("[STATE] wrote");
+          }
+        })
+        .catch((error) => {
+          console.info("[STATE] write error", error);
+        });
+    }, PRESENCE_WRITER_TICK_MS);
+
+    return () => {
+      if (presenceWriterRef.current) {
+        clearInterval(presenceWriterRef.current);
+        presenceWriterRef.current = null;
+      }
+      if (DEBUG) {
+        console.info("[WRITER] presence released");
+      }
+    };
+  }, [arenaId, isPresenceWriter, livePresence, myPresenceId]);
 
   // Persist writer to /state/current if I'm the elected writer but state hasn't recorded it yet
   useEffect(() => {
@@ -410,5 +499,21 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     teardown,
   ]);
 
-  return { gameBooted };
+  useEffect(() => {
+    if (!arenaId) return;
+    const ref = doc(db, "arenas", arenaId, "state", "current");
+    return onSnapshot(ref, (snapshot) => {
+      const data = snapshot.data();
+      if (data) {
+        console.info("[STATE] snapshot", { ts: (data as { ts?: unknown }).ts });
+      }
+    });
+  }, [arenaId]);
+
+  return {
+    gameBooted,
+    presenceId: myPresenceId,
+    isWriter: isPresenceWriter,
+    liveCount: livePresence.length,
+  };
 }

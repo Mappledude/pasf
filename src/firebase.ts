@@ -27,7 +27,7 @@ import {
   type QueryDocumentSnapshot,
   type Unsubscribe,
   type Firestore,
-  type DocumentData,
+  type DocumentData, // ← add this
 } from "firebase/firestore";
 
 // === CONFIG (stickfightpa) ===
@@ -462,10 +462,11 @@ async function joinArenaWithDb(
   if (trimmedDisplayName) {
     baseData.displayName = trimmedDisplayName;
   }
-  const heartbeatData = {
-    lastSeen: serverTimestamp(),
-    expireAt: Timestamp.fromMillis(Date.now() + 60_000),
-  };
+const heartbeatData = {
+  lastSeen: Date.now(), // ← number, not serverTimestamp
+  expireAt: Timestamp.fromMillis(Date.now() + 60_000),
+};
+
 
   const logName = (trimmedDisplayName ?? codename ?? "Player").replace(/"/g, '\\"');
 
@@ -516,14 +517,15 @@ async function heartbeatArenaPresenceWithDb(
   const trimmedDisplayName =
     typeof displayName === "string" && displayName.trim().length > 0 ? displayName.trim() : null;
   const playerId = profileId ?? presenceId;
-  const data: Record<string, unknown> = {
-    playerId,
-    authUid,
-    arenaId,
-    codename,
-    lastSeen: serverTimestamp(),
-    expireAt: Timestamp.fromMillis(Date.now() + 60_000),
-  };
+const data: Record<string, unknown> = {
+  playerId,
+  authUid,
+  arenaId,
+  codename,
+  lastSeen: Date.now(), // ← number
+  expireAt: Timestamp.fromMillis(Date.now() + 60_000),
+};
+
   if (profileId) {
     data.profileId = profileId;
   }
@@ -684,25 +686,37 @@ export const watchArenaSeats = (
 export type LivePresence = {
   id: string;
   authUid: string;
-  lastSeen: number;
+  lastSeen: number;  // milliseconds
   presenceId?: string;
 } & DocumentData;
 
 export const PRESENCE_STALE_MS = 20_000; // lastSeen ≤ 20s
-export const HEARTBEAT_MS = 10_000; // write heartbeat every 10s
+export const HEARTBEAT_MS = 10_000;      // write heartbeat every 10s
 
 const toMillis = (value: unknown): number => {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
+const toMillis = (value: unknown): number => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+
+  if (value && typeof value === "object") {
+    const t = value as { toMillis?: () => number; toDate?: () => Date };
+    try {
+      if (typeof t.toMillis === "function") {
+        const ms = t.toMillis();
+        if (typeof ms === "number" && Number.isFinite(ms)) return ms;
+      }
+      if (typeof t.toDate === "function") {
+        const d = t.toDate();
+        const ms = d?.getTime?.();
+        if (typeof ms === "number" && Number.isFinite(ms)) return ms;
+      }
+    } catch {
+      /* ignore */
+    }
   }
-  const maybeTimestamp = value as { toMillis?: () => number; toDate?: () => Date } | undefined;
-  const fromToMillis = maybeTimestamp?.toMillis?.();
-  if (typeof fromToMillis === "number" && Number.isFinite(fromToMillis)) {
-    return fromToMillis;
-  }
-  const fromDate = maybeTimestamp?.toDate?.()?.getTime?.();
-  if (typeof fromDate === "number" && Number.isFinite(fromDate)) {
-    return fromDate;
+
+  return 0;
+};
+
   }
   return 0;
 };
@@ -713,17 +727,20 @@ export function watchArenaPresence(
   onChange: (live: LivePresence[]) => void,
 ) {
   return onSnapshot(collection(database, `arenas/${arenaId}/presence`), (snap) => {
-    const allPresences = snap.docs.map((docSnap) => {
-      const data = docSnap.data() as DocumentData;
-      const lastSeen = toMillis((data as { lastSeen?: unknown }).lastSeen);
-      return {
-        id: docSnap.id,
-        ...data,
-        lastSeen,
-      } as LivePresence;
-    });
+// inside watchArenaPresence(...), in the onSnapshot handler:
+const now = Date.now();
 
-    const live = allPresences.filter((presence) => Date.now() - presence.lastSeen <= PRESENCE_STALE_MS);
+const live = snap.docs
+  .map((docSnap) => {
+    const data = docSnap.data() as DocumentData;
+    const lastSeen = toMillis((data as any).lastSeen);
+    return { id: docSnap.id, ...(data as any), lastSeen } as LivePresence;
+  })
+  .filter((p) => now - p.lastSeen <= PRESENCE_STALE_MS);
+
+console.info("[PRESENCE] live", { live: live.length, all: snap.size });
+onChange(live);
+
 
     console.info("[PRESENCE] live", { live: live.length, all: snap.size });
     onChange(live);
@@ -737,25 +754,23 @@ export function startPresenceHeartbeat(
   authUid: string,
 ) {
   const ref = doc(database, `arenas/${arenaId}/presence/${presenceId}`);
-  let timer: ReturnType<typeof setInterval> | null = null;
-
   const tick = async () => {
     try {
+      // WRITE A NUMBER for lastSeen → easier live filtering
       await setDoc(
         ref,
-        { presenceId, authUid, lastSeen: Date.now() },
+        { presenceId, authUid, lastSeen: Date.now(), expireAt: Timestamp.fromMillis(Date.now() + 60_000) },
         { merge: true },
       );
+      console.info("[PRESENCE] beat", { presenceId });
     } catch (error) {
       console.info("[PRESENCE] heartbeat error", error);
     }
   };
 
   void tick();
-  timer = setInterval(tick, HEARTBEAT_MS);
-  return () => {
-    if (timer) clearInterval(timer);
-  };
+  const timer = setInterval(tick, HEARTBEAT_MS);
+  return () => clearInterval(timer);
 }
 
 const arenaStateDoc = (arenaId: string) =>

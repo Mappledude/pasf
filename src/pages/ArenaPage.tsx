@@ -466,7 +466,11 @@ export default function ArenaPage() {
       }`
     : "—";
 
-  const { gameBooted } = useArenaRuntime({
+  const {
+    gameBooted,
+    isWriter: runtimeIsWriter,
+    liveCount: runtimeLiveCount,
+  } = useArenaRuntime({
     arenaId,
     authReady,
     stateReady,
@@ -610,7 +614,9 @@ export default function ArenaPage() {
               className="muted"
               style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)", textAlign: "center" }}
             >
-              Arena scene boots once auth and /state/current are ready.
+              {runtimeIsWriter
+                ? "Writer elected. Initializing arena scene..."
+                : `Waiting for arena state… peers=${runtimeLiveCount}`}
             </div>
           )}
           {touchControlsEnabled && gameBooted ? <TouchControls /> : null}
