@@ -1,5 +1,10 @@
 import { initializeApp } from "firebase/app";
 import {
+  initializeAppCheck,
+  ReCaptchaEnterpriseProvider,
+  ReCaptchaV3Provider,
+} from "firebase/app-check";
+import {
   getAuth,
   signInAnonymously,
   onAuthStateChanged,
@@ -27,6 +32,7 @@ import {
   type Unsubscribe,
   type Firestore,
 } from "firebase/firestore";
+import { getFunctions } from "firebase/functions";
 import { dbg } from "./lib/debug";
 
 // === CONFIG (stickfightpa) ===
@@ -41,8 +47,47 @@ export const firebaseConfig = {
 
 // === SINGLETONS ===
 export const app = initializeApp(firebaseConfig);
+
+// --- App Check (must execute BEFORE any db/auth/functions usage) ---
+(() => {
+  if (import.meta.env?.DEV && typeof self !== "undefined") {
+    // Use true on first run to auto-register a debug token. Replace with a string once registered.
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
+    self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+  }
+
+  const providerKind = (import.meta.env?.VITE_APPCHECK_PROVIDER || "v3").toLowerCase();
+  const siteKey = import.meta.env?.VITE_APPCHECK_SITE_KEY;
+
+  try {
+    if (!siteKey) {
+      console.warn("[ARENA] appcheck-init missing site key; skipping App Check init");
+      return;
+    }
+
+    if (providerKind === "enterprise") {
+      initializeAppCheck(app, {
+        provider: new ReCaptchaEnterpriseProvider(siteKey),
+        isTokenAutoRefreshEnabled: true,
+      });
+      console.info("[ARENA] appcheck-init", { provider: "enterprise" });
+    } else {
+      initializeAppCheck(app, {
+        provider: new ReCaptchaV3Provider(siteKey),
+        isTokenAutoRefreshEnabled: true,
+      });
+      console.info("[ARENA] appcheck-init", { provider: "v3" });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[ARENA] appcheck-init-failed", { message });
+  }
+})();
+
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+export const functions = getFunctions(app);
 
 const FIREBASE_DEBUG = import.meta.env?.VITE_DEBUG_FIREBASE === "true" || import.meta.env?.DEV;
 
