@@ -4,14 +4,15 @@ import { db } from "../firebase";
 import { doc, onSnapshot } from "firebase/firestore";
 
 export default function DebugArenaStatePage() {
-  const { arenaId = "" } = useParams();
+  const { arenaId: routeArenaId } = useParams<{ arenaId?: string }>();
+  const arenaId = useMemo(() => (routeArenaId ?? "CLIFF").toString(), [routeArenaId]);
   const [json, setJson] = useState<any>(null);
   const [exists, setExists] = useState<boolean>(false);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle");
 
   useEffect(() => {
     if (!arenaId) return;
-    const ref = doc(db, "arenas", arenaId, "state");
+    const ref = doc(db, "arenas", arenaId, "state", "current");
     return onSnapshot(ref, (s) => {
       setExists(s.exists());
       setJson(s.data());
@@ -40,7 +41,7 @@ export default function DebugArenaStatePage() {
     <section className="card">
       <div className="card-header">
         <h2>Debug Arena State</h2>
-        <span className="muted mono">/arenas/{arenaId}/state</span>
+        <span className="muted mono">/arenas/{arenaId}/state/current</span>
       </div>
       <div className="button-row" style={{ marginBottom: 16 }}>
         <Link to="/" className="button ghost">
