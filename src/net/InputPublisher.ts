@@ -1,5 +1,6 @@
 import { app, db } from "../firebase";
 import { writeArenaInput, type InputPayload } from "./ActionBus";
+import { dbg } from "../lib/debug";
 
 const THROTTLE_MS = 60;
 
@@ -82,6 +83,11 @@ const flushPending = (next: NormalizedInput) => {
     payload.codename = context.codename;
   }
 
+  dbg("input:enqueue", {
+    arenaId: context.arenaId,
+    presenceId: context.presenceId,
+    type: payload.type,
+  });
   void writeArenaInput(db, app, context.arenaId, context.presenceId, payload).catch((error) => {
     console.warn("[INPUT] enqueue failed", error);
   });

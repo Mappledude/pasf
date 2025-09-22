@@ -1,5 +1,6 @@
 import { db, watchArenaInputs, writeArenaState, type ArenaInputSnapshot } from "../../firebase";
 import { watchArenaPresence, type LivePresence } from "../../lib/presence";
+import { dbg } from "../../lib/debug";
 import type { ArenaPresenceEntry } from "../../types/models";
 import { mapLivePresenceToArenaEntries } from "../../utils/livePresence";
 
@@ -173,17 +174,20 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
       const presenceId = snapshot.presenceId;
       if (!presenceId) {
         logger.info?.(`[INPUT] rejected {presenceId=?, reason=missing_presenceId}`);
+        dbg("input:rejected", { arenaId: options.arenaId, presenceId, reason: "missing_presenceId" });
         continue;
       }
 
       const info = presenceIndex.get(presenceId);
       if (!info) {
         logger.info?.(`[INPUT] rejected {presenceId=${presenceId}, reason=presence_offline}`);
+        dbg("input:rejected", { arenaId: options.arenaId, presenceId, reason: "presence_offline" });
         continue;
       }
 
       if (!snapshot.authUid) {
         logger.info?.(`[INPUT] rejected {presenceId=${presenceId}, reason=missing_auth}`);
+        dbg("input:rejected", { arenaId: options.arenaId, presenceId, reason: "missing_auth" });
         continue;
       }
 
@@ -191,6 +195,11 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
         logger.info?.(
           `[INPUT] rejected {presenceId=${presenceId}, reason=auth_mismatch expected=${info.authUid} got=${snapshot.authUid}}`,
         );
+        dbg("input:rejected", {
+          arenaId: options.arenaId,
+          presenceId,
+          reason: "auth_mismatch",
+        });
         continue;
       }
 
@@ -342,6 +351,11 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
         ),
       } satisfies Parameters<typeof writeArenaState>[1];
 
+      dbg("state:write", {
+        arenaId: options.arenaId,
+        ts,
+        entities: Object.keys(snapshot.entities ?? {}),
+      });
       await writeArenaState(options.arenaId, snapshot);
       logger.info?.(`[ARENA] writer=${options.writerAuthUid} tick=${tick}`);
       logger.info?.(`[STATE] entities=${fighters.size}`);

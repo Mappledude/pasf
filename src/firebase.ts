@@ -29,6 +29,7 @@ import {
   type Firestore,
   type DocumentData, // ← add this
 } from "firebase/firestore";
+import { dbg } from "./lib/debug";
 
 // === CONFIG (stickfightpa) ===
 export const firebaseConfig = {
@@ -733,6 +734,7 @@ export function watchArenaPresence(
       .filter((p) => now - p.lastSeen <= PRESENCE_STALE_MS);
 
     console.info("[PRESENCE] live", { live: live.length, all: snap.size });
+    dbg("presence:live", { arenaId, live: live.length, all: snap.size });
     onChange(live);
   });
 }
@@ -753,6 +755,7 @@ export function startPresenceHeartbeat(
         { merge: true },
       );
       console.info("[PRESENCE] beat", { presenceId });
+      dbg("presence:beat", { arenaId, presenceId });
     } catch (error) {
       console.info("[PRESENCE] heartbeat error", error);
     }
@@ -829,9 +832,11 @@ export function watchArenaState(arenaId: string, cb: (state: any) => void) {
     .then(() => {
       if (cancelled) return;
       const ref = arenaStateDoc(arenaId);
-      unsubscribe = onSnapshot(ref, (snap) =>
-        cb(snap.exists() ? snap.data() : undefined),
-      );
+      unsubscribe = onSnapshot(ref, (snap) => {
+        const data = snap.exists() ? snap.data() : undefined;
+        dbg("state:snapshot", { arenaId, hasData: !!data, ts: (data as { ts?: unknown } | undefined)?.ts });
+        cb(data);
+      });
       if (cancelled && unsubscribe) {
         unsubscribe();
         unsubscribe = null;
