@@ -18,11 +18,17 @@ const DEFAULT_SPAWN = {
 };
 
 export default function ArenaPage() {
-  const params = useParams<{ id: string }>();
+  // Route param is /arena/:id — default to CLIFF and normalize to uppercase.
+  const params = useParams<{ id?: string }>();
   const arenaId = (params.id ?? "CLIFF").toUpperCase();
+
+  // Auth (for display/codename only)
   const { user, player } = useAuth();
+
+  // Runtime hook provides presence + inputs (and any boot error upstream)
   const { presenceId, live, stable, enqueueInput, bootError } = useArenaRuntime(arenaId);
 
+  // Phaser mounts regardless of Firestore success/failure
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const latestConfigRef = useRef<ArenaSceneConfig>();
@@ -31,36 +37,32 @@ export default function ArenaPage() {
   const [gameBootError, setGameBootError] = useState<string | null>(null);
 
   const codename = useMemo(() => {
-    if (player?.codename && player.codename.trim().length > 0) {
-      return player.codename.trim();
-    }
-    if (player?.displayName && player.displayName.trim().length > 0) {
-      return player.displayName.trim();
-    }
+    if (player?.codename?.trim()) return player.codename.trim();
+    if (player?.displayName?.trim()) return player.displayName.trim();
     return "Agent";
   }, [player?.codename, player?.displayName]);
 
-  const meAuthUid = user?.uid;
+  const meAuthUid = user?.uid ?? null;
   const meId = presenceId ?? meAuthUid ?? `local-${arenaId}`;
 
   const sceneConfig = useMemo<ArenaSceneConfig>(
     () => ({
       arenaId,
-      me: { id: meId, codename, authUid: meAuthUid },
+      me: { id: meId, codename, authUid: meAuthUid ?? undefined },
       spawn: { ...DEFAULT_SPAWN },
     }),
     [arenaId, codename, meAuthUid, meId],
   );
 
+  // Keep the latest scene config in a ref for safe restarts
   useEffect(() => {
     latestConfigRef.current = sceneConfig;
   }, [sceneConfig]);
 
+  // Boot Phaser (unconditional); never block canvas on Firestore
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) {
-      return;
-    }
+    if (!container) return;
 
     let disposed = false;
     setSceneBooted(false);
@@ -77,68 +79,47 @@ export default function ArenaPage() {
     };
 
     try {
-      console.info("[ArenaPage] booting Phaser", { arenaId });
+      console.info("[ARENA] phaser-boot", { arenaId });
       const game = makeGame(config);
       gameRef.current = game;
-      const configPayload = latestConfigRef.current ?? sceneConfig;
-      game.scene.add("Arena", ArenaScene, true, configPayload);
-      if (!disposed) {
-        setSceneBooted(true);
-      }
+      const payload = latestConfigRef.current ?? sceneConfig;
+      game.scene.add("Arena", ArenaScene, true, payload);
+      if (!disposed) setSceneBooted(true);
     } catch (err) {
-      console.error("[ArenaPage] failed to boot Phaser", err);
-      if (!disposed) {
-        setGameBootError(err instanceof Error ? err.message : String(err));
-      }
+      console.error("[ARENA] phaser-boot-failed", err);
+      if (!disposed) setGameBootError(err instanceof Error ? err.message : String(err));
     }
 
     return () => {
-      if (!disposed) {
-        setSceneBooted(false);
-        disposed = true;
-      }
+      if (!disposed) setSceneBooted(false);
+      disposed = true;
       const game = gameRef.current;
       if (game) {
-        console.info("[ArenaPage] destroying Phaser");
+        console.info("[ARENA] phaser-destroy");
         game.destroy(true);
         gameRef.current = null;
       }
     };
   }, [arenaId]);
 
+  // If config changes after boot, restart the scene with the new payload
   useEffect(() => {
-    if (!sceneBooted) {
-      return;
-    }
+    if (!sceneBooted) return;
     const game = gameRef.current;
-    if (!game) {
-      return;
-    }
-    const configPayload = latestConfigRef.current ?? sceneConfig;
+    if (!game) return;
+    const payload = latestConfigRef.current ?? sceneConfig;
     const arenaScene = game.scene.getScene("Arena");
-    if (!arenaScene) {
-      return;
-    }
-    console.info("[ArenaPage] refreshing Arena scene", {
-      arenaId: configPayload.arenaId,
-      meId: configPayload.me.id,
-    });
-    arenaScene.scene.restart(configPayload);
+    if (!arenaScene) return;
+    console.info("[ARENA] scene-restart", { arenaId: payload.arenaId, meId: payload.me.id });
+    arenaScene.scene.restart(payload);
   }, [sceneBooted, sceneConfig]);
 
+  // Non-blocking overlay to surface boot/runtime status
   const overlayState = useMemo(() => {
-    if (gameBootError) {
-      return { tone: "error" as const, message: `Renderer offline: ${gameBootError}` };
-    }
-    if (bootError) {
-      return { tone: "error" as const, message: `Arena bootstrap failed: ${bootError}` };
-    }
-    if (!sceneBooted) {
-      return { tone: "info" as const, message: "Booting arena renderer…" };
-    }
-    if (!presenceId) {
-      return { tone: "info" as const, message: "Linking presence channel…" };
-    }
+    if (gameBootError) return { tone: "error" as const, message: `Renderer offline: ${gameBootError}` };
+    if (bootError) return { tone: "error" as const, message: `Arena bootstrap failed: ${bootError}` };
+    if (!sceneBooted) return { tone: "info" as const, message: "Booting arena renderer…" };
+    if (!presenceId) return { tone: "info" as const, message: "Linking presence channel…" };
     return null;
   }, [bootError, gameBootError, presenceId, sceneBooted]);
 
@@ -151,10 +132,11 @@ export default function ArenaPage() {
         <p className="muted" style={{ fontFamily: "var(--font-mono)", fontSize: "0.85rem" }}>
           Presence: {presenceId ?? "connecting"}
         </p>
-        <button type="button" onClick={() => enqueueInput({ type: "move", dx: 1 })}>
+        <button type="button" onClick={() => enqueueInput?.({ type: "move", dx: 1 })}>
           Move ➡️
         </button>
       </div>
+
       <section className="card" style={{ marginTop: 24 }}>
         <h2 style={{ marginBottom: 12 }}>Arena Feed</h2>
         <div
@@ -168,10 +150,7 @@ export default function ArenaPage() {
             overflow: "hidden",
           }}
         >
-          <div
-            ref={containerRef}
-            style={{ width: ARENA_WIDTH, height: ARENA_HEIGHT, margin: "0 auto" }}
-          />
+          <div ref={containerRef} style={{ width: ARENA_WIDTH, height: ARENA_HEIGHT, margin: "0 auto" }} />
           {overlayState ? (
             <div
               style={{
@@ -197,8 +176,8 @@ export default function ArenaPage() {
         </div>
         <div className="card-footer">[SIM] Phaser arena scene · multiplayer feed</div>
       </section>
+
       <DebugDock />
     </>
   );
 }
-
