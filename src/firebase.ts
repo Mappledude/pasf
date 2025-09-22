@@ -1,4 +1,4 @@
-import { initializeApp } from "firebase/app";
+import { getApp, initializeApp } from "firebase/app";
 import {
   initializeAppCheck,
   ReCaptchaEnterpriseProvider,
@@ -47,6 +47,7 @@ export const firebaseConfig = {
 
 // === SINGLETONS ===
 export const app = initializeApp(firebaseConfig);
+console.info("[ARENA] firebase-project", { projectId: getApp().options.projectId });
 
 // --- App Check (must execute BEFORE any db/auth/functions usage) ---
 (() => {
