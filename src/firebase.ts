@@ -674,6 +674,31 @@ export type LivePresence = {
 export const PRESENCE_STALE_MS = 20_000; // lastSeen ≤ 20s
 export const HEARTBEAT_MS = 10_000; // write heartbeat every 10s
 
+const toMillis = (value: unknown): number => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (value && typeof value === "object") {
+    const maybeTimestamp = value as { toMillis?: () => number; toDate?: () => Date };
+    if (typeof maybeTimestamp.toMillis === "function") {
+      const ms = maybeTimestamp.toMillis();
+      if (typeof ms === "number" && Number.isFinite(ms)) {
+        return ms;
+      }
+    }
+    if (typeof maybeTimestamp.toDate === "function") {
+      const date = maybeTimestamp.toDate();
+      if (date instanceof Date) {
+        const ms = date.getTime();
+        if (Number.isFinite(ms)) {
+          return ms;
+        }
+      }
+    }
+  }
+  return Number.NaN;
+};
+
 export function watchArenaPresence(
   database: Firestore,
   arenaId: string,
@@ -682,10 +707,23 @@ export function watchArenaPresence(
   return onSnapshot(collection(database, `arenas/${arenaId}/presence`), (snap) => {
     const now = Date.now();
     const live = snap.docs
-      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as DocumentData) }))
-      .filter((presence: any) => now - (presence.lastSeen ?? 0) <= PRESENCE_STALE_MS) as LivePresence[];
+      .map((docSnap) => {
+        const data = { id: docSnap.id, ...(docSnap.data() as DocumentData) } as Record<string, unknown>;
+        const lastSeenMs = toMillis(data.lastSeen);
+        return {
+          ...data,
+          lastSeen: lastSeenMs,
+        };
+      })
+      .filter((presence) => {
+        const lastSeenMs = typeof presence.lastSeen === "number" ? presence.lastSeen : Number.NaN;
+        if (!Number.isFinite(lastSeenMs)) {
+          return false;
+        }
+        return now - lastSeenMs <= PRESENCE_STALE_MS;
+      }) as LivePresence[];
 
-    console.info(`[PRESENCE] live=${live.length} all=${snap.size}`);
+    console.info("[PRESENCE] live", { live: live.length, all: snap.size });
     onChange(live);
   });
 }
