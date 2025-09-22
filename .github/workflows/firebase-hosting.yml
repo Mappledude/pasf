@@ -1,72 +1,41 @@
-name: Deploy to Firebase Hosting
+name: Deploy to Firebase Hosting (Golden)
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
 
+concurrency:
+  group: hosting-deploy-main
+  cancel-in-progress: true
+
 jobs:
-  build-and-deploy:
+  build-deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set build metadata
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          # no cache unless you add a lockfile later
+
+      - name: Install dependencies (no-lockfile-safe)
+        run: npm install --no-audit --no-fund
+
+      - name: Type check (fast fail)
+        run: npx tsc -p tsconfig.build.json --noEmit
+
+      - name: Build metadata
         run: |
           echo "VITE_COMMIT_SHA=${GITHUB_SHA}" >> $GITHUB_ENV
           echo "VITE_COMMIT_SHORT=${GITHUB_SHA::7}" >> $GITHUB_ENV
           echo "VITE_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      # Detect package manager and install accordingly.
-      - name: Install dependencies (lockfile-aware)
-        id: deps
-        run: |
-          set -euo pipefail
-          if [ -f pnpm-lock.yaml ]; then
-            PM=pnpm
-          elif [ -f yarn.lock ]; then
-            PM=yarn
-          elif [ -f package-lock.json ]; then
-            PM=npm-lock
-          else
-            PM=npm-nolock
-          fi
-
-          echo "pm=$PM" >> $GITHUB_OUTPUT
-
-          case "$PM" in
-            pnpm)
-              echo "Using pnpm"
-              corepack enable
-              corepack prepare pnpm@latest --activate
-              pnpm install --frozen-lockfile
-              ;;
-            yarn)
-              echo "Using yarn"
-              corepack enable
-              corepack prepare yarn@stable --activate
-              yarn install --immutable
-              ;;
-            npm-lock)
-              echo "Using npm (ci with lockfile)"
-              npm ci
-              ;;
-            npm-nolock)
-              echo "Using npm (no lockfile found) → npm install"
-              # No lockfile yet — allow install (do not write lockfile)
-              npm install --no-audit --no-fund
-              ;;
-          esac
-
-      - name: Type check
-        run: npx tsc -p tsconfig.build.json --noEmit
 
       - name: Build
         run: npm run build
@@ -86,24 +55,87 @@ jobs:
           }
           JSON
 
+      - name: Upload build artifact (dist/)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ env.VITE_COMMIT_SHORT }}
+          path: dist
+
       - name: Install firebase-tools
         run: npm i -g firebase-tools@14
 
       - name: Write service account creds
-        run: |
-          echo "$FIREBASE_SERVICE_ACCOUNT_STICKFIGHTPA" > $RUNNER_TEMP/gcp.json
+        run: echo "$FIREBASE_SERVICE_ACCOUNT_STICKFIGHTPA" > $RUNNER_TEMP/gcp.json
         env:
           FIREBASE_SERVICE_ACCOUNT_STICKFIGHTPA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STICKFIGHTPA }}
 
-      - name: Deploy Hosting
+      - name: Deploy LIVE to Hosting site
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp.json
-          PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID || 'stickfightpa' }}
-          SITE_ID: ${{ vars.FIREBASE_SITE || 'stickfightpa' }}
         run: |
-          firebase deploy --only hosting --project stickfightpa --site stickfightpa
+          firebase deploy --only hosting --project stickfightpa --site stickfightpa --non-interactive
 
-      - name: Smoke test: canary present on home
+      - name: Smoke test LIVE (retry up to 6× with no-cache)
+        id: smoke
+        shell: bash
         run: |
-          curl -fsS https://stickfightpa.web.app/ -o home.html
-          grep -q "RED CANARY ACTIVE" home.html || (echo "Canary not found on live site" && exit 1)
+          set -euo pipefail
+          URL_HOME="https://stickfightpa.web.app/"
+          URL_VER="https://stickfightpa.web.app/version.json"
+
+          attempt() {
+            i="$1"
+            echo "Attempt $i: fetching home + version..."
+            curl -fsS -L -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' "$URL_HOME" -o home.html || return 1
+            curl -fsS -L -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' "$URL_VER" -o live.json || true
+
+            echo "--- Home head (first 200 chars) ---"
+            head -c 200 home.html || true
+            echo; echo "-----------------------------------"
+
+            # Canary check (either RED CANARY ACTIVE present OR version.json commit match)
+            CANARY_OK=1
+            if grep -q "RED CANARY ACTIVE" home.html; then
+              echo "Found red canary text in home.html"
+              CANARY_OK=0
+            elif [ -s live.json ]; then
+              LIVE_SHA=$(python3 - <<'PY'
+import json,sys
+try:
+  print(json.load(open("live.json")).get("commit",""))
+except Exception as e:
+  print("")
+PY
+)
+              echo "Expected: ${VITE_COMMIT_SHA}"
+              echo "Live:     ${LIVE_SHA}"
+              if [ "$LIVE_SHA" = "${VITE_COMMIT_SHA}" ]; then
+                echo "version.json commit matches."
+                CANARY_OK=0
+              fi
+            fi
+
+            return $CANARY_OK
+          }
+
+          for i in 1 2 3 4 5 6; do
+            if attempt "$i"; then
+              echo "SMOKE_OK=1" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            echo "Canary not visible yet; sleeping 8s..."
+            sleep 8
+          done
+
+          echo "SMOKE_OK=0" >> $GITHUB_OUTPUT
+          echo "Canary check failed after retries."
+          exit 1
+
+      - name: Upload LIVE HTML on failure
+        if: failure() || steps.smoke.outputs.SMOKE_OK != '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-response-${{ env.VITE_COMMIT_SHORT }}
+          path: |
+            home.html
+            live.json
