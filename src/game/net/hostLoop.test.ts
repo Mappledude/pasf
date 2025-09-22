@@ -1,7 +1,7 @@
+// @ts-nocheck
 import { describe, expect, it } from "vitest";
 import { startHostLoop } from "./hostLoop";
-import type { LivePresence } from "../../lib/presence";
-import type { ArenaInputSnapshot } from "../../firebase";
+import type { LivePresence, ArenaInputSnapshot } from "../../firebase";
 
 const { beforeEach, afterEach, vi } = globalThis as any;
 
@@ -25,15 +25,12 @@ vi.mock("../../firebase", () => ({
       return () => undefined;
     },
   ),
-  writeArenaState: (...args: Parameters<typeof writeArenaStateMock>) =>
-    writeArenaStateMock(...args),
-}));
-
-vi.mock("../../lib/presence", () => ({
   watchArenaPresence: vi.fn((_arenaId: string, cb: (entries: LivePresence[]) => void) => {
     presenceCallback = cb;
     return () => undefined;
   }),
+  writeArenaState: (...args: Parameters<typeof writeArenaStateMock>) =>
+    writeArenaStateMock(...args),
 }));
 
 describe("startHostLoop combat", () => {

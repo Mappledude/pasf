@@ -1,4 +1,4 @@
-import type { LivePresence } from "../lib/presence";
+import type { LivePresence } from "../firebase";
 import type { ArenaPresenceEntry } from "../types/models";
 
 const normalizeString = (value: unknown): string | undefined => {
@@ -18,10 +18,10 @@ const readTimestamp = (value: unknown): string | undefined => {
 
 export const livePresenceToArenaEntry = (live: LivePresence): ArenaPresenceEntry => {
   const raw = live as Record<string, unknown>;
-  const presenceId = normalizeString(live.presenceId) ?? normalizeString(raw.playerId) ?? live.id;
+  const presenceId = normalizeString((raw.presenceId as string) ?? undefined) ?? normalizeString(raw.playerId) ?? live.id;
   const playerId = normalizeString(raw.playerId) ?? presenceId;
   const codename = normalizeString(raw.codename) ?? "Agent";
-  const displayName = normalizeString(raw.displayName);
+  const displayName = normalizeString(live.displayName ?? raw.displayName);
   const authUid = normalizeString(live.authUid) ?? presenceId;
   const profileId = normalizeString(raw.profileId);
   const joinedAt = readTimestamp(raw.joinedAt);

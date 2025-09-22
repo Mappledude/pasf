@@ -1,8 +1,10 @@
+import { useParams } from "react-router-dom";
 import { useArenaRuntime } from "../utils/useArenaRuntime";
 import DebugDock from "../components/DebugDock";
 
 export default function ArenaPage() {
-  const arenaId = "CLIFF";
+  const params = useParams<{ id: string }>();
+  const arenaId = (params.id ?? "CLIFF").toUpperCase();
   const { live, stable, enqueueInput } = useArenaRuntime(arenaId);
 
   return (

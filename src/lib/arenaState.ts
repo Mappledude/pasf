@@ -10,6 +10,7 @@ import {
 } from "firebase/firestore";
 
 import { ensureAnonAuth } from "../auth/ensureAnonAuth";
+import { ensureArenaFixed } from "./arenaRepo";
 
 export type ArenaState = {
   tick: number;
@@ -29,6 +30,7 @@ export async function ensureArenaState(
 ): Promise<void> {
   console.info("[ARENA] ensureArenaState: start", { arenaId });
   await ensureAnonAuth();
+  await ensureArenaFixed(arenaId, db);
   const ref = arenaStateRef(db, arenaId);
   const snap = await getDoc(ref);
   if (!snap.exists()) {
@@ -85,6 +87,7 @@ export async function touchPlayer(
 ) {
   const uid = await ensureAnonAuth();
   console.info("[ARENA] touchPlayer", { arenaId, uid });
+  await ensureArenaFixed(arenaId, db);
   const ref = arenaStateRef(db, arenaId);
   await setDoc(
     ref,
