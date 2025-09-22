@@ -16,21 +16,24 @@ service cloud.firestore {
       // Session-scoped presence (per-tab)
       match /presence/{presenceId} {
         allow read: if true;
-        // TEMP: allow any authed client to create/update/delete its presence doc.
-        // After we confirm, we can tighten to require authUid match.
-        allow create, update, delete: if authed();
-        // Tighter version for later:
-        // allow create, update, delete: if authed() &&
-        //   request.resource.data.authUid == request.auth.uid;
+
+        // Create: allow any authed client to create its presence doc when it stamps its UID
+        allow create: if authed()
+          && request.resource.data.authUid == request.auth.uid;
+
+        // Update/Delete: only the owner of the existing doc may change/remove it;
+        // prevent authUid from being hijacked.
+        allow update, delete: if authed()
+          && resource.data.authUid == request.auth.uid
+          && (!('authUid' in request.resource.data)
+              || request.resource.data.authUid == resource.data.authUid);
       }
 
       // Inputs fan-in: inputs/{presenceId}/events/{eventId}
       match /inputs/{presenceId}/events/{eventId} {
         allow read: if true;
-        allow create: if authed();
-        // Tighter later:
-        // allow create: if authed() &&
-        //   request.resource.data.authUid == request.auth.uid;
+        allow create: if authed()
+          && request.resource.data.authUid == request.auth.uid;
       }
     }
 
