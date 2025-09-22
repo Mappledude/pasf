@@ -35,18 +35,15 @@ import {
 } from "../utils/presenceThresholds";
 import { loadTabPresenceId } from "../utils/sessionId";
 
-
 import { useAuth } from "../context/AuthContext";
 import TouchControls from "../game/input/TouchControls";
 import { useArenaRuntime } from "../utils/useArenaRuntime";
-
 
 // Optional: keep a gated warn helper (don’t also import debugWarn)
 const debugWarn = (...args: unknown[]) => {
   if (!ARENA_NET_DEBUG) return;
   console.warn(...args);
 };
-
 
 export default function ArenaPage() {
   const { arenaId = "" } = useParams();
@@ -63,7 +60,6 @@ export default function ArenaPage() {
   const authUidRef = useRef<string | null>(null);
   const presenceIdRef = useRef<string | null>(null);
   const rosterLogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
 
   const {
     players: presence,
@@ -89,7 +85,6 @@ export default function ArenaPage() {
 
   // Human title for header; never show the doc id
   const arenaTitle = arenaName ?? "Arena";
-
 
   useEffect(() => {
     const uid = auth.currentUser?.uid ?? user?.uid ?? null;
@@ -157,7 +152,6 @@ export default function ArenaPage() {
       }
     };
   }, [arenaId, formattedRosterNames, presence, presenceLoading, rosterCount, rosterNames]);
-
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -416,20 +410,20 @@ export default function ArenaPage() {
   const meUid = authUidRef.current;
 
   const writerUid = state?.writerUid ?? null;
+  const lastWriterUid = state?.lastWriter ?? null;
 
-  const writerEntry = useMemo(() => {
-    if (!writerUid) return null;
-    return (
-      presence.find((entry) => (entry.authUid ?? entry.playerId ?? entry.presenceId) === writerUid) ?? null
-    );
-  }, [presence, writerUid]);
+  // Resolve host by authUid from state (prefer lastWriter for stability)
+  const hostAuthUid = lastWriterUid ?? writerUid ?? null;
 
-  const hostLabel = writerEntry
-    ? `${
-        writerEntry.codename ??
-        writerEntry.playerId?.slice(0, 6) ??
-        writerEntry.presenceId.slice(0, 6)
-      }${writerEntry.authUid && writerEntry.authUid === meUid ? " (you)" : ""}`
+  const hostEntry = useMemo(() => {
+    if (!hostAuthUid) return null;
+    return presence.find((entry) => entry.authUid === hostAuthUid) ?? null;
+  }, [hostAuthUid, presence]);
+
+  const hostLabel = hostEntry
+    ? `${hostEntry.codename ?? hostEntry.playerId.slice(0, 6)}${
+        hostEntry.authUid && hostEntry.authUid === meUid ? " (you)" : ""
+      }`
     : "—";
 
   const { gameBooted } = useArenaRuntime({
@@ -565,7 +559,8 @@ export default function ArenaPage() {
           className="canvas-frame"
           style={{
             minHeight: 420,
-            background: "radial-gradient(circle at 50% 50%, rgba(255,255,255,0.04) 0 35%, transparent 60%), var(--bg-soft)",
+            background:
+              "radial-gradient(circle at 50% 50%, rgba(255,255,255,0.04) 0 35%, transparent 60%), var(--bg-soft)",
             display: "grid",
             placeItems: "center",
           }}
@@ -578,8 +573,7 @@ export default function ArenaPage() {
               Arena scene boots once auth and /state/current are ready.
             </div>
           )}
-{touchControlsEnabled && gameBooted ? <TouchControls /> : null}
-
+          {touchControlsEnabled && gameBooted ? <TouchControls /> : null}
         </div>
         <div className="card-footer">[NET] {debugFooter}</div>
       </section>

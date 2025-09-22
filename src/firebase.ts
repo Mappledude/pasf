@@ -213,6 +213,8 @@ export interface ArenaEntityState {
 export interface ArenaStateWrite {
   tick: number;
   writerUid: string | null;
+  lastWriter: string | null;
+  ts: number;
   entities: Record<string, ArenaEntityState>;
 }
 
@@ -663,7 +665,17 @@ export const watchArenaPresence = (
           ? data.authUid.trim()
           : undefined;
       return {
-        presenceId,
+return {
+  presenceId: docSnap.id,                  // ✅ doc id on READ
+  playerId: data.playerId ?? docSnap.id,
+  codename: data.codename ?? "Agent",
+  displayName,
+  joinedAt: data.joinedAt?.toDate?.().toISOString?.(),
+  authUid: typeof data.authUid === "string" ? data.authUid : undefined, // ✅ read from data
+  profileId: data.profileId,
+  lastSeen: data.lastSeen?.toDate?.().toISOString?.(),
+  expireAt: data.expireAt?.toDate?.().toISOString?.(),
+} as ArenaPresenceEntry;
         playerId: data.playerId ?? docSnap.id,
         codename: data.codename ?? "Agent",
         displayName,
@@ -700,7 +712,22 @@ const serializeInputSnapshot = (snap: QueryDocumentSnapshot): ArenaInputSnapshot
   return {
     playerId: (data.playerId as string) ?? snap.id,
     presenceId: snap.id,
-    authUid: (data.authUid as string) ?? undefined,
+const serializeInputSnapshot = (snap: QueryDocumentSnapshot): ArenaInputSnapshot => {
+  const data = snap.data() as Record<string, unknown>;
+  return {
+    playerId: (data.playerId as string) ?? snap.id,
+    presenceId: snap.id,
+    authUid: typeof data.authUid === "string" ? data.authUid : undefined, // ✅
+    codename: (data.codename as string) ?? undefined,
+    left: typeof data.left === "boolean" ? data.left : undefined,
+    right: typeof data.right === "boolean" ? data.right : undefined,
+    jump: typeof data.jump === "boolean" ? data.jump : undefined,
+    attack: typeof data.attack === "boolean" ? data.attack : undefined,
+    attackSeq: typeof data.attackSeq === "number" ? data.attackSeq : undefined,
+    updatedAt: readTimestamp(data.updatedAt),
+  };
+};
+
     codename: (data.codename as string) ?? undefined,
     left: typeof data.left === "boolean" ? data.left : undefined,
     right: typeof data.right === "boolean" ? data.right : undefined,
@@ -776,12 +803,31 @@ export interface ArenaInputWrite {
   attackSeq?: number;
 }
 
-export async function writeArenaInput(arenaId: string, input: ArenaInputWrite): Promise<void> {
+export async function writeArenaInput(
+  arenaId: string,
+  input: ArenaInputWrite
+): Promise<void> {
   await ensureAnonAuth();
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("No authenticated user");
+
   const ref = arenaInputDoc(arenaId, input.presenceId);
   const payload: Record<string, unknown> = {
     playerId: input.presenceId,
     presenceId: input.presenceId,
+    authUid: uid,                         // ✅ stamp owner for security rules
+    left: input.left,
+    right: input.right,
+    jump: input.jump,
+    attack: input.attack,
+    codename: input.codename,
+    attackSeq: input.attackSeq,
+    updatedAt: serverTimestamp(),
+  };
+
+  await setDoc(ref, payload, { merge: true });
+}
+
     updatedAt: serverTimestamp(),
   };
   if (typeof input.authUid === "string" && input.authUid.length > 0) {
@@ -822,8 +868,8 @@ export async function writeArenaState(arenaId: string, state: ArenaStateWrite): 
   await ensureAnonAuth();
   const ref = arenaStateDoc(arenaId);
   const entities: Record<string, Record<string, unknown>> = {};
-  for (const [uid, data] of Object.entries(state.entities)) {
-    entities[uid] = {
+  for (const [presenceId, data] of Object.entries(state.entities)) {
+    entities[presenceId] = {
       ...data,
       updatedAt: serverTimestamp(),
     };
@@ -833,6 +879,8 @@ export async function writeArenaState(arenaId: string, state: ArenaStateWrite): 
     {
       tick: state.tick,
       writerUid: state.writerUid,
+      lastWriter: state.lastWriter,
+      ts: state.ts,
       entities,
       lastUpdate: serverTimestamp(),
     },

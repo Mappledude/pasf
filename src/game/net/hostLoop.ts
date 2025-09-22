@@ -5,11 +5,11 @@ import {
   type ArenaInputSnapshot,
 } from "../../firebase";
 import type { ArenaPresenceEntry } from "../../types/models";
-import { isPresenceEntryActive } from "../../utils/presenceThresholds";
 
 export interface HostLoopOptions {
   arenaId: string;
-  writerUid: string;
+  writerAuthUid: string;
+  writerPresenceId: string;
   tickRateHz?: number;
   log?: typeof console;
 }
@@ -18,7 +18,7 @@ export interface HostLoopController {
   stop(): void;
 }
 
-const DEFAULT_TICK_RATE = 11;
+const DEFAULT_TICK_RATE = 12;
 const MOVE_SPEED = 240; // px/s
 const GRAVITY = 1_200; // px/s^2
 const JUMP_VELOCITY = -420; // px/s (negative = upward)
@@ -31,8 +31,11 @@ const ATTACK_DAMAGE = 10;
 const ATTACK_DURATION_MS = 140;
 const ATTACK_COOLDOWN_MS = 320;
 
+const ONLINE_WINDOW_MS = 20_000;
+
 interface FighterState {
-  uid: string;
+  presenceId: string;
+  authUid: string;
   x: number;
   y: number;
   vx: number;
@@ -45,6 +48,13 @@ interface FighterState {
   nextAttackAllowedAtMs: number;
   lastAttackSeq: number;
   hitTargets: Set<string>;
+}
+
+interface PresenceInfo {
+  presenceId: string;
+  authUid: string;
+  lastSeenMs: number;
+  entry: ArenaPresenceEntry;
 }
 
 interface InputCommand {
@@ -83,6 +93,7 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
   let spawnCursor = 0;
   const fighters = new Map<string, FighterState>();
   const inputs = new Map<string, InputCommand>();
+  const presenceIndex = new Map<string, PresenceInfo>();
   let presenceUnsub: (() => void) | null = null;
   let inputsUnsub: (() => void) | null = null;
 
@@ -96,25 +107,33 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
     if (stopped) return;
     const now = Date.now();
     const active = new Set<string>();
+
     for (const entry of entries) {
-      const uid = entry.authUid ?? entry.playerId;
-      if (!uid) continue;
-      if (!isPresenceEntryActive(entry, now)) {
-        continue;
-      }
+      const presenceId = entry.presenceId ?? entry.playerId;
+      const authUid = entry.authUid ?? entry.playerId;
+      if (!presenceId || !authUid) continue;
+
       const parsedLastSeen = entry.lastSeen ? Date.parse(entry.lastSeen) : Number.NaN;
-      const lastSeenMs = Number.isFinite(parsedLastSeen) ? parsedLastSeen : now;
-      active.add(uid);
-      const existing = fighters.get(uid);
-      const name = entry.codename ?? entry.displayName ?? uid.slice(0, 6);
+      const lastSeenMs = Number.isFinite(parsedLastSeen) ? parsedLastSeen : Number.NaN;
+      if (!Number.isFinite(lastSeenMs)) continue;
+      if (now - lastSeenMs > ONLINE_WINDOW_MS) continue;
+
+      active.add(presenceId);
+      presenceIndex.set(presenceId, { presenceId, authUid, lastSeenMs, entry });
+
+      const existing = fighters.get(presenceId);
+      const name = entry.codename ?? entry.displayName ?? authUid.slice(0, 6);
       if (existing) {
         existing.lastSeenMs = lastSeenMs;
         existing.name = name;
+        existing.authUid = authUid;
         continue;
       }
+
       const spawn = nextSpawn();
-      fighters.set(uid, {
-        uid,
+      fighters.set(presenceId, {
+        presenceId,
+        authUid,
         x: spawn.x,
         y: spawn.y,
         vx: 0,
@@ -128,28 +147,55 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
         lastAttackSeq: 0,
         hitTargets: new Set(),
       });
-      logger.info?.(`[SPAWN] uid=${uid} name="${name}"`);
+      logger.info?.(`[SPAWN] presence=${presenceId} auth=${authUid} name="${name}"`);
     }
 
-    for (const [uid, fighter] of fighters) {
-      if (!active.has(uid)) {
-        fighters.delete(uid);
-        logger.info?.(`[DESPAWN] uid=${uid}`);
+    for (const [presenceId] of fighters) {
+      if (!active.has(presenceId)) {
+        fighters.delete(presenceId);
+        inputs.delete(presenceId);
+        presenceIndex.delete(presenceId);
+        logger.info?.(`[DESPAWN] presence=${presenceId}`);
       }
     }
   };
 
   const handleInputs = (snapshots: ArenaInputSnapshot[]) => {
     if (stopped) return;
+
     const seen = new Set<string>();
+
     for (const snapshot of snapshots) {
-      const uid = snapshot.presenceId ?? snapshot.playerId;
-      if (!uid) continue;
-      const previous = inputs.get(uid);
+      const presenceId = snapshot.presenceId;
+      if (!presenceId) {
+        logger.info?.(`[INPUT] rejected {presenceId=?, reason=missing_presenceId}`);
+        continue;
+      }
+
+      const info = presenceIndex.get(presenceId);
+      if (!info) {
+        logger.info?.(`[INPUT] rejected {presenceId=${presenceId}, reason=presence_offline}`);
+        continue;
+      }
+
+      if (!snapshot.authUid) {
+        logger.info?.(`[INPUT] rejected {presenceId=${presenceId}, reason=missing_auth}`);
+        continue;
+      }
+
+      if (snapshot.authUid !== info.authUid) {
+        logger.info?.(
+          `[INPUT] rejected {presenceId=${presenceId}, reason=auth_mismatch expected=${info.authUid} got=${snapshot.authUid}}`,
+        );
+        continue;
+      }
+
+      const previous = inputs.get(presenceId);
       const attackSeq =
         typeof snapshot.attackSeq === "number"
           ? snapshot.attackSeq
           : previous?.attackSeq ?? DEFAULT_COMMAND.attackSeq;
+
       const command: InputCommand = {
         left: !!snapshot.left,
         right: !!snapshot.right,
@@ -158,9 +204,11 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
         attackSeq,
         codename: snapshot.codename,
       };
-      inputs.set(uid, command);
-      seen.add(uid);
+
+      inputs.set(presenceId, command);
+      seen.add(presenceId);
     }
+
     for (const key of [...inputs.keys()]) {
       if (!seen.has(key)) {
         const prev = inputs.get(key);
@@ -171,36 +219,35 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
         });
       }
     }
+
     logger.info?.(
-      `[INPUT] count=${snapshots.length} uids=${snapshots
-        .map((snap) => snap.presenceId ?? snap.playerId)
+      `[INPUT] count=${snapshots.length} presences=${snapshots
+        .map((snap) => snap.presenceId ?? "?")
         .join(",")}`,
     );
   };
 
   const step = async () => {
-    if (stopped || busy) {
-      return;
-    }
+    if (stopped || busy) return;
     busy = true;
+
     try {
       const dt = intervalMs / 1000;
       const now = Date.now();
+
+      // Integrate movement & jump/gravity
       for (const fighter of fighters.values()) {
-        const command = inputs.get(fighter.uid) ?? DEFAULT_COMMAND;
+        const command = inputs.get(fighter.presenceId) ?? DEFAULT_COMMAND;
+
         const horizontal = command.left === command.right ? 0 : command.left ? -1 : 1;
         fighter.vx = horizontal * MOVE_SPEED;
         fighter.x += fighter.vx * dt;
-        if (fighter.x < MIN_X) {
-          fighter.x = MIN_X;
-        } else if (fighter.x > MAX_X) {
-          fighter.x = MAX_X;
-        }
-        if (fighter.vx < 0) {
-          fighter.facing = "L";
-        } else if (fighter.vx > 0) {
-          fighter.facing = "R";
-        }
+
+        if (fighter.x < MIN_X) fighter.x = MIN_X;
+        else if (fighter.x > MAX_X) fighter.x = MAX_X;
+
+        if (fighter.vx < 0) fighter.facing = "L";
+        else if (fighter.vx > 0) fighter.facing = "R";
 
         const onGround = Math.abs(fighter.y - FLOOR_Y) < 1 && fighter.vy === 0;
         if (command.jump && onGround) {
@@ -219,13 +266,16 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
 
         const attackSeq =
           typeof command.attackSeq === "number" ? command.attackSeq : fighter.lastAttackSeq;
+
         if (typeof attackSeq === "number") {
           if (attackSeq > fighter.lastAttackSeq) {
             if (now >= fighter.nextAttackAllowedAtMs) {
               fighter.attackActiveUntilMs = now + ATTACK_DURATION_MS;
               fighter.nextAttackAllowedAtMs = now + ATTACK_COOLDOWN_MS;
               fighter.hitTargets.clear();
-              logger.info?.(`[ATTACK] uid=${fighter.uid} seq=${attackSeq}`);
+              logger.info?.(
+                `[ATTACK] presence=${fighter.presenceId} auth=${fighter.authUid} seq=${attackSeq}`,
+              );
             }
             fighter.lastAttackSeq = attackSeq;
           } else if (attackSeq < fighter.lastAttackSeq) {
@@ -238,13 +288,13 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
         }
       }
 
+      // Resolve hits
       for (const fighter of fighters.values()) {
-        if (fighter.attackActiveUntilMs <= now) {
-          continue;
-        }
+        if (fighter.attackActiveUntilMs <= now) continue;
+
         for (const target of fighters.values()) {
-          if (target.uid === fighter.uid) continue;
-          if (fighter.hitTargets.has(target.uid)) continue;
+          if (target.presenceId === fighter.presenceId) continue;
+          if (fighter.hitTargets.has(target.presenceId)) continue;
           if (target.hp <= 0) continue;
 
           const dx = target.x - fighter.x;
@@ -255,21 +305,24 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
           if (Math.abs(dy) > ATTACK_RANGE_Y) continue;
 
           target.hp = Math.max(0, target.hp - ATTACK_DAMAGE);
-          fighter.hitTargets.add(target.uid);
+          fighter.hitTargets.add(target.presenceId);
           logger.info?.(
-            `[HIT] attacker=${fighter.uid} target=${target.uid} hp=${target.hp} damage=${ATTACK_DAMAGE}`,
+            `[HIT] attacker=${fighter.presenceId} target=${target.presenceId} hp=${target.hp} damage=${ATTACK_DAMAGE}`,
           );
         }
       }
 
       tick += 1;
 
+      const ts = Date.now();
       const snapshot = {
         tick,
-        writerUid: options.writerUid,
+        writerUid: options.writerAuthUid,
+        lastWriter: options.writerAuthUid,
+        ts,
         entities: Object.fromEntries(
-          [...fighters.entries()].map(([uid, fighter]) => [
-            uid,
+          [...fighters.entries()].map(([presenceId, fighter]) => [
+            presenceId,
             {
               x: fighter.x,
               y: fighter.y,
@@ -286,7 +339,8 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
       } satisfies Parameters<typeof writeArenaState>[1];
 
       await writeArenaState(options.arenaId, snapshot);
-      logger.info?.(`[STATE] tick=${tick} entities=${fighters.size}`);
+      logger.info?.(`[ARENA] writer=${options.writerAuthUid} tick=${tick}`);
+      logger.info?.(`[STATE] entities=${fighters.size}`);
     } catch (error) {
       logger.error?.("[hostLoop] step error", error);
     } finally {
@@ -301,7 +355,12 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
     void step();
   }, intervalMs);
 
-  logger.info?.("[hostLoop] started", { arenaId: options.arenaId, tickRate });
+  logger.info?.("[hostLoop] started", {
+    arenaId: options.arenaId,
+    tickRate,
+    writerAuthUid: options.writerAuthUid,
+    writerPresenceId: options.writerPresenceId,
+  });
 
   return {
     stop() {
@@ -320,6 +379,7 @@ export function startHostLoop(options: HostLoopOptions): HostLoopController {
         inputsUnsub();
         inputsUnsub = null;
       }
+      presenceIndex.clear();
       logger.info?.("[hostLoop] stopped", { arenaId: options.arenaId });
     },
   };
