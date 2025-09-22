@@ -694,7 +694,6 @@ export const PRESENCE_STALE_MS = 20_000; // lastSeen ≤ 20s
 export const HEARTBEAT_MS = 10_000;      // write heartbeat every 10s
 
 const toMillis = (value: unknown): number => {
-const toMillis = (value: unknown): number => {
   if (typeof value === "number" && Number.isFinite(value)) return value;
 
   if (value && typeof value === "object") {
@@ -717,30 +716,21 @@ const toMillis = (value: unknown): number => {
   return 0;
 };
 
-  }
-  return 0;
-};
-
 export function watchArenaPresence(
   database: Firestore,
   arenaId: string,
   onChange: (live: LivePresence[]) => void,
 ) {
   return onSnapshot(collection(database, `arenas/${arenaId}/presence`), (snap) => {
-// inside watchArenaPresence(...), in the onSnapshot handler:
-const now = Date.now();
+    const now = Date.now();
 
-const live = snap.docs
-  .map((docSnap) => {
-    const data = docSnap.data() as DocumentData;
-    const lastSeen = toMillis((data as any).lastSeen);
-    return { id: docSnap.id, ...(data as any), lastSeen } as LivePresence;
-  })
-  .filter((p) => now - p.lastSeen <= PRESENCE_STALE_MS);
-
-console.info("[PRESENCE] live", { live: live.length, all: snap.size });
-onChange(live);
-
+    const live = snap.docs
+      .map((docSnap) => {
+        const data = docSnap.data() as DocumentData;
+        const lastSeen = toMillis((data as any).lastSeen);
+        return { id: docSnap.id, ...(data as any), lastSeen } as LivePresence;
+      })
+      .filter((p) => now - p.lastSeen <= PRESENCE_STALE_MS);
 
     console.info("[PRESENCE] live", { live: live.length, all: snap.size });
     onChange(live);
