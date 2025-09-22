@@ -9,8 +9,8 @@ import React, {
 } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { ensureAnonAuth } from "../auth/ensureAnonAuth";
 import {
-  ensureAnonAuth,
   onAuth,
   updatePlayerActivity,
   maybeConnectEmulators,

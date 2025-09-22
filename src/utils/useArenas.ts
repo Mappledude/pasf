@@ -7,7 +7,8 @@ import {
   type FirestoreError,
   type Unsubscribe,
 } from "firebase/firestore";
-import { db, ensureAnonAuth } from "../firebase";
+import { ensureAnonAuth } from "../auth/ensureAnonAuth";
+import { db } from "../firebase";
 import type { Arena } from "../types/models";
 
 interface UseArenasResult {
