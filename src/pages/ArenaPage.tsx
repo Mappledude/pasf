@@ -5,6 +5,7 @@ import {
   auth,
   db,
   ensureAnonAuth,
+  ensureArenaDocument,
   heartbeatArenaPresence,
   joinArena,
   leaveArena,
@@ -46,7 +47,8 @@ const debugWarn = (...args: unknown[]) => {
 };
 
 export default function ArenaPage() {
-  const { arenaId = "" } = useParams();
+  const { arenaId: routeArenaId } = useParams<{ arenaId?: string }>();
+  const arenaId = useMemo(() => (routeArenaId ?? "CLIFF").toString(), [routeArenaId]);
   const nav = useNavigate();
   const [stateReady, setStateReady] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -212,6 +214,7 @@ export default function ArenaPage() {
     (async () => {
       try {
         debugLog("[ARENA] arena state init starting", { arenaId });
+        await ensureArenaDocument(arenaId);
         await ensureArenaState(db, arenaId); // Create doc if missing
         if (cancelled) return;
         unsub = await watchArenaState(

@@ -391,6 +391,23 @@ export const createArena = async (input: CreateArenaInput) => {
   }
 };
 
+export const ensureArenaDocument = async (arenaId: string): Promise<void> => {
+  console.info("[ARENA] ensureArenaDocument: start", { arenaId });
+  await ensureAnonAuth();
+  const ref = doc(db, "arenas", arenaId);
+  const snapshot = await getDoc(ref);
+  const payload: Record<string, unknown> = {
+    mode: "CLIFF",
+  };
+
+  if (!snapshot.exists()) {
+    payload.createdAt = serverTimestamp();
+  }
+
+  await setDoc(ref, payload, { merge: true });
+  console.info("[ARENA] ensureArenaDocument: ready", { arenaId, created: !snapshot.exists() });
+};
+
 export const listArenas = async (): Promise<Arena[]> => {
   const snapshot = await getDocs(collection(db, "arenas"));
   return snapshot.docs.map((s) => {
@@ -678,23 +695,14 @@ const toMillis = (value: unknown): number => {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }
-  if (value && typeof value === "object") {
-    const maybeTimestamp = value as { toMillis?: () => number; toDate?: () => Date };
-    if (typeof maybeTimestamp.toMillis === "function") {
-      const ms = maybeTimestamp.toMillis();
-      if (typeof ms === "number" && Number.isFinite(ms)) {
-        return ms;
-      }
-    }
-    if (typeof maybeTimestamp.toDate === "function") {
-      const date = maybeTimestamp.toDate();
-      if (date instanceof Date) {
-        const ms = date.getTime();
-        if (Number.isFinite(ms)) {
-          return ms;
-        }
-      }
-    }
+  const maybeTimestamp = value as { toMillis?: () => number; toDate?: () => Date } | undefined;
+  const fromToMillis = maybeTimestamp?.toMillis?.();
+  if (typeof fromToMillis === "number" && Number.isFinite(fromToMillis)) {
+    return fromToMillis;
+  }
+  const fromDate = maybeTimestamp?.toDate?.()?.getTime?.();
+  if (typeof fromDate === "number" && Number.isFinite(fromDate)) {
+    return fromDate;
   }
   return 0;
 };
@@ -705,25 +713,19 @@ export function watchArenaPresence(
   onChange: (live: LivePresence[]) => void,
 ) {
   return onSnapshot(collection(database, `arenas/${arenaId}/presence`), (snap) => {
-    const presences = snap.docs.map((docSnap) => {
-      const data = { id: docSnap.id, ...(docSnap.data() as DocumentData) } as Record<string, unknown>;
-      const lastSeenMs = toMillis(data.lastSeen);
+    const allPresences = snap.docs.map((docSnap) => {
+      const data = docSnap.data() as DocumentData;
+      const lastSeen = toMillis((data as { lastSeen?: unknown }).lastSeen);
       return {
+        id: docSnap.id,
         ...data,
-        lastSeen: lastSeenMs,
-      };
+        lastSeen,
+      } as LivePresence;
     });
 
-    let liveCount = 0;
-    const live = presences.filter((presence) => {
-      const isLive = Date.now() - toMillis(presence.lastSeen) <= PRESENCE_STALE_MS;
-      if (isLive) {
-        liveCount += 1;
-      }
-      return isLive;
-    }) as LivePresence[];
+    const live = allPresences.filter((presence) => Date.now() - presence.lastSeen <= PRESENCE_STALE_MS);
 
-    console.info("[PRESENCE] live", { live: liveCount, all: snap.size });
+    console.info("[PRESENCE] live", { live: live.length, all: snap.size });
     onChange(live);
   });
 }
