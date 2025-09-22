@@ -114,8 +114,6 @@ export default function ArenaPage() {
     arenaScene.scene.restart(payload);
   }, [sceneBooted, sceneConfig]);
 
-  const permDenied = bootError?.toLowerCase?.().includes("permission") ?? false;
-
   // Non-blocking overlay to surface boot/runtime status
   const overlayState = useMemo(() => {
     if (gameBootError) return { tone: "error" as const, message: `Renderer offline: ${gameBootError}` };
@@ -124,6 +122,8 @@ export default function ArenaPage() {
     if (!presenceId) return { tone: "info" as const, message: "Linking presence channel…" };
     return null;
   }, [bootError, gameBootError, presenceId, sceneBooted]);
+
+  const permDenied = (bootError ?? "").toLowerCase().includes("permission");
 
   return (
     <>
@@ -151,11 +151,11 @@ export default function ArenaPage() {
               fontSize: "0.85rem",
               color: "#f87171",
               border: "1px solid rgba(248,113,113,0.35)",
-              borderRadius: "8px",
+              borderRadius: 8,
               background: "rgba(15,17,21,0.6)",
             }}
           >
-            Arena bootstrap failed (permissions). Gameplay may be local-only.
+            Arena bootstrap failed (permissions). Gameplay may be local-only until rules are fixed.
           </div>
         )}
         <div
@@ -189,7 +189,7 @@ export default function ArenaPage() {
                 pointerEvents: "none",
               }}
             >
-            {overlayState.message}
+              {overlayState.message}
             </div>
           ) : null}
         </div>
