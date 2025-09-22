@@ -3,8 +3,8 @@ import { useArenaRuntime } from "../utils/useArenaRuntime";
 import DebugDock from "../components/DebugDock";
 
 export default function ArenaPage() {
-  const params = useParams<{ id: string }>();
-  const arenaId = (params.id ?? "CLIFF").toUpperCase();
+  const { arenaId: routeArenaId } = useParams<{ arenaId?: string }>();
+  const arenaId = routeArenaId?.toUpperCase() ?? "CLIFF";
   const { live, stable, enqueueInput } = useArenaRuntime(arenaId);
 
   return (

@@ -9,7 +9,7 @@ import { pullAllInputs, writeStateSnapshot, stepSimFrame, resetArenaSim } from "
 
 const WAIT_DEBOUNCE_MS = 2000;
 
-export function useArenaRuntime(arenaId: string, playerId?: string, profile?: { displayName?: string }) {
+export function useArenaRuntime(arenaId?: string, playerId?: string, profile?: { displayName?: string }) {
   const [presenceId, setPresenceId] = useState<string>();
   const [live, setLive] = useState<LivePresence[]>([]);
   const [stable, setStable] = useState(false);
@@ -19,6 +19,11 @@ export function useArenaRuntime(arenaId: string, playerId?: string, profile?: { 
 
   useEffect(() => {
     let cancelled = false;
+    if (!arenaId) {
+      setPresenceId(undefined);
+      return () => {};
+    }
+
     (async () => {
       console.info("[ARENA] boot", { arenaId });
       try {
@@ -42,6 +47,14 @@ export function useArenaRuntime(arenaId: string, playerId?: string, profile?: { 
   }, [arenaId, playerId, profile]);
 
   useEffect(() => {
+    if (!arenaId) {
+      setLive([]);
+      return () => {
+        offRef.current?.();
+        offRef.current = undefined;
+      };
+    }
+
     offRef.current?.();
     offRef.current = watchArenaPresence(arenaId, setLive);
     return () => {
@@ -60,7 +73,7 @@ export function useArenaRuntime(arenaId: string, playerId?: string, profile?: { 
   }, [live]);
 
   useEffect(() => {
-    if (!presenceId) return;
+    if (!arenaId || !presenceId) return;
     const leader = [...live].map((p) => p.id).sort()[0];
     const amWriter = leader && leader === presenceId;
     if (!amWriter) {
@@ -87,13 +100,18 @@ export function useArenaRuntime(arenaId: string, playerId?: string, profile?: { 
   }, [arenaId, presenceId, JSON.stringify(live.map((p) => p.id).sort())]);
 
   const enqueueInput = useMemo(() => {
+    if (!arenaId || !presenceId) {
+      return async () => {};
+    }
     return async (payload: any) => {
-      if (!presenceId) return;
       await writeArenaInput(arenaId, presenceId, payload);
     };
   }, [arenaId, presenceId]);
 
   useEffect(() => {
+    if (!arenaId) {
+      return () => {};
+    }
     return () => {
       stopWriterRef.current?.();
       if (stopPresenceRef.current) void stopPresenceRef.current();
