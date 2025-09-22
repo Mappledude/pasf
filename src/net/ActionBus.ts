@@ -12,13 +12,13 @@ export type InputPayload = {
   attack?: boolean;
   attackSeq?: number;
   codename?: string;
-  // allow extra flags, but they won't all be persisted
   [k: string]: unknown;
 };
 
 /**
- * Write a single input event under arenas/{arenaId}/inputs/{presenceId}/events
- * Stamps authUid and clientTs. Validations happen on the host loop.
+ * Enqueue a player input under:
+ *   arenas/{arenaId}/inputs/{presenceId}/events
+ * Stamps authUid + clientTs. Host loop validates & applies.
  */
 export async function writeArenaInput(
   db: Firestore,
