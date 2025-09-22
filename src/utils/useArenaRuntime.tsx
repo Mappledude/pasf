@@ -77,6 +77,7 @@ export function useArenaRuntime(
           return;
         }
         setPresenceId(myPresenceId);
+        setBootError(null);
         stopPresenceRef.current = stop;
         console.info("[PRESENCE] started", { arenaId, presenceId: myPresenceId });
 
