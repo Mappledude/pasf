@@ -101,7 +101,7 @@ jobs:
           PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID || 'stickfightpa' }}
           SITE_ID: ${{ vars.FIREBASE_SITE || 'stickfightpa' }}
         run: |
-          firebase deploy --only hosting --project "$PROJECT_ID" --site "$SITE_ID"
+          firebase deploy --only hosting --project stickfightpa --site stickfightpa
 
       - name: Hit live /version.json
         run: |
