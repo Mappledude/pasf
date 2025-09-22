@@ -151,6 +151,7 @@ export interface Arena {
 }
 
 export interface ArenaPresenceEntry {
+  presenceId: string;
   playerId: string;
   codename: string;
   displayName?: string | null;
@@ -420,18 +421,19 @@ export const getArena = async (arenaId: string): Promise<Arena | null> => {
 
 export const joinArena = async (
   arenaId: string,
-  presenceId: string,
+  ids: { authUid: string; presenceId: string },
   codename: string,
   profileId?: string,
   displayName?: string | null,
 ) => {
+  const { authUid, presenceId } = ids;
   const ref = doc(db, `arenas/${arenaId}/presence/${presenceId}`);
   const trimmedDisplayName =
     typeof displayName === "string" && displayName.trim().length > 0 ? displayName.trim() : null;
   const playerId = profileId ?? presenceId;
   const baseData: Record<string, unknown> = {
     playerId,
-    authUid: presenceId,
+    authUid,
     arenaId,
     codename,
   };
@@ -443,7 +445,7 @@ export const joinArena = async (
   }
   const heartbeatData = {
     lastSeen: serverTimestamp(),
-    expireAt: Timestamp.fromMillis(Date.now() + 45_000),
+    expireAt: Timestamp.fromMillis(Date.now() + 60_000),
   };
 
   const logName = (trimmedDisplayName ?? codename ?? "Player").replace(/"/g, '\\"');
@@ -451,7 +453,7 @@ export const joinArena = async (
   const existing = await getDoc(ref);
   if (!existing.exists()) {
     console.info(
-      `[PRESENCE] join name="${logName}" uid=${presenceId} arena=${arenaId} playerId=${playerId}`,
+      `[PRESENCE] join name="${logName}" authUid=${authUid} presenceId=${presenceId} arena=${arenaId} playerId=${playerId}`,
     );
     await setDoc(
       ref,
@@ -466,7 +468,7 @@ export const joinArena = async (
   }
 
   console.info(
-    `[PRESENCE] rejoin (preserving joinedAt) name="${logName}" uid=${presenceId} arena=${arenaId} playerId=${playerId}`,
+    `[PRESENCE] rejoin (preserving joinedAt) name="${logName}" authUid=${authUid} presenceId=${presenceId} arena=${arenaId} playerId=${playerId}`,
   );
   await updateDoc(ref, {
     ...baseData,
@@ -476,22 +478,23 @@ export const joinArena = async (
 
 export const heartbeatArenaPresence = async (
   arenaId: string,
-  presenceId: string,
+  ids: { authUid: string; presenceId: string },
   codename: string,
   profileId?: string,
   displayName?: string | null,
 ) => {
+  const { authUid, presenceId } = ids;
   const ref = doc(db, `arenas/${arenaId}/presence/${presenceId}`);
   const trimmedDisplayName =
     typeof displayName === "string" && displayName.trim().length > 0 ? displayName.trim() : null;
   const playerId = profileId ?? presenceId;
   const data: Record<string, unknown> = {
     playerId,
-    authUid: presenceId,
+    authUid,
     arenaId,
     codename,
     lastSeen: serverTimestamp(),
-    expireAt: Timestamp.fromMillis(Date.now() + 45_000),
+    expireAt: Timestamp.fromMillis(Date.now() + 60_000),
   };
   if (profileId) {
     data.profileId = profileId;
@@ -499,6 +502,10 @@ export const heartbeatArenaPresence = async (
   if (trimmedDisplayName) {
     data.displayName = trimmedDisplayName;
   }
+  const logName = (trimmedDisplayName ?? codename ?? "Player").replace(/"/g, '\\"');
+  console.info(
+    `[PRESENCE] heartbeat name="${logName}" authUid=${authUid} presenceId=${presenceId} arena=${arenaId}`,
+  );
 
   try {
     await updateDoc(ref, data);
@@ -506,7 +513,7 @@ export const heartbeatArenaPresence = async (
     const code = (error as { code?: string } | null)?.code;
     if (code === "not-found") {
       console.info(
-        `[PRESENCE] heartbeat recovery uid=${presenceId} arena=${arenaId} (presence missing, re-joining with fresh joinedAt)`,
+        `[PRESENCE] heartbeat recovery authUid=${authUid} presenceId=${presenceId} arena=${arenaId} (presence missing, re-joining with fresh joinedAt)`,
       );
       await setDoc(ref, { ...data, joinedAt: serverTimestamp() });
       return;
@@ -648,17 +655,32 @@ export const watchArenaPresence = (
   return onSnapshot(presenceRef, (snapshot) => {
     const players = snapshot.docs.map((docSnap) => {
       const data = docSnap.data() as any;
+      const presenceId = docSnap.id;
       const displayName =
         typeof data.displayName === "string" && data.displayName.trim().length > 0
           ? data.displayName.trim()
           : undefined;
+      const authUid =
+        typeof data.authUid === "string" && data.authUid.trim().length > 0
+          ? data.authUid.trim()
+          : undefined;
       return {
-        presenceId: docSnap.id,
+return {
+  presenceId: docSnap.id,                  // ✅ doc id on READ
+  playerId: data.playerId ?? docSnap.id,
+  codename: data.codename ?? "Agent",
+  displayName,
+  joinedAt: data.joinedAt?.toDate?.().toISOString?.(),
+  authUid: typeof data.authUid === "string" ? data.authUid : undefined, // ✅ read from data
+  profileId: data.profileId,
+  lastSeen: data.lastSeen?.toDate?.().toISOString?.(),
+  expireAt: data.expireAt?.toDate?.().toISOString?.(),
+} as ArenaPresenceEntry;
         playerId: data.playerId ?? docSnap.id,
         codename: data.codename ?? "Agent",
         displayName,
         joinedAt: data.joinedAt?.toDate?.().toISOString?.(),
-        authUid: data.authUid ?? docSnap.id,
+        authUid: authUid ?? presenceId,
         profileId: data.profileId,
         lastSeen: data.lastSeen?.toDate?.().toISOString?.(),
         expireAt: data.expireAt?.toDate?.().toISOString?.(),
@@ -671,8 +693,8 @@ export const watchArenaPresence = (
 const arenaStateDoc = (arenaId: string) =>
   doc(db, "arenas", arenaId, "state", "current");
 
-const arenaInputDoc = (arenaId: string, playerId: string) =>
-  doc(db, "arenas", arenaId, "inputs", playerId);
+const arenaInputDoc = (arenaId: string, presenceId: string) =>
+  doc(db, "arenas", arenaId, "inputs", presenceId);
 
 const arenaInputsCollection = (arenaId: string) =>
   collection(db, "arenas", arenaId, "inputs");
@@ -690,7 +712,22 @@ const serializeInputSnapshot = (snap: QueryDocumentSnapshot): ArenaInputSnapshot
   return {
     playerId: (data.playerId as string) ?? snap.id,
     presenceId: snap.id,
-    authUid: typeof data.authUid === "string" ? data.authUid : undefined,
+const serializeInputSnapshot = (snap: QueryDocumentSnapshot): ArenaInputSnapshot => {
+  const data = snap.data() as Record<string, unknown>;
+  return {
+    playerId: (data.playerId as string) ?? snap.id,
+    presenceId: snap.id,
+    authUid: typeof data.authUid === "string" ? data.authUid : undefined, // ✅
+    codename: (data.codename as string) ?? undefined,
+    left: typeof data.left === "boolean" ? data.left : undefined,
+    right: typeof data.right === "boolean" ? data.right : undefined,
+    jump: typeof data.jump === "boolean" ? data.jump : undefined,
+    attack: typeof data.attack === "boolean" ? data.attack : undefined,
+    attackSeq: typeof data.attackSeq === "number" ? data.attackSeq : undefined,
+    updatedAt: readTimestamp(data.updatedAt),
+  };
+};
+
     codename: (data.codename as string) ?? undefined,
     left: typeof data.left === "boolean" ? data.left : undefined,
     right: typeof data.right === "boolean" ? data.right : undefined,
@@ -756,6 +793,8 @@ export function watchArenaState(arenaId: string, cb: (state: any) => void) {
 }
 
 export interface ArenaInputWrite {
+  presenceId: string;
+  authUid?: string;
   left?: boolean;
   right?: boolean;
   jump?: boolean;
@@ -766,18 +805,34 @@ export interface ArenaInputWrite {
 
 export async function writeArenaInput(
   arenaId: string,
-  presenceId: string,
-  input: ArenaInputWrite,
-  authUid: string,
+  input: ArenaInputWrite
 ): Promise<void> {
   await ensureAnonAuth();
-  const ref = arenaInputDoc(arenaId, presenceId);
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("No authenticated user");
+
+  const ref = arenaInputDoc(arenaId, input.presenceId);
   const payload: Record<string, unknown> = {
-    playerId: presenceId,
-    presenceId,
-    authUid,
+    playerId: input.presenceId,
+    presenceId: input.presenceId,
+    authUid: uid,                         // ✅ stamp owner for security rules
+    left: input.left,
+    right: input.right,
+    jump: input.jump,
+    attack: input.attack,
+    codename: input.codename,
+    attackSeq: input.attackSeq,
     updatedAt: serverTimestamp(),
   };
+
+  await setDoc(ref, payload, { merge: true });
+}
+
+    updatedAt: serverTimestamp(),
+  };
+  if (typeof input.authUid === "string" && input.authUid.length > 0) {
+    payload.authUid = input.authUid;
+  }
   if (typeof input.left === "boolean") payload.left = input.left;
   if (typeof input.right === "boolean") payload.right = input.right;
   if (typeof input.jump === "boolean") payload.jump = input.jump;

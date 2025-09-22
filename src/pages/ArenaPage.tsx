@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 
 import {
+  auth,
   db,
   ensureAnonAuth,
   heartbeatArenaPresence,
@@ -32,19 +33,17 @@ import {
   HEARTBEAT_INTERVAL_MS,
   PRESENCE_GRACE_BUFFER_MS,
 } from "../utils/presenceThresholds";
-
+import { loadTabPresenceId } from "../utils/sessionId";
 
 import { useAuth } from "../context/AuthContext";
 import TouchControls from "../game/input/TouchControls";
 import { useArenaRuntime } from "../utils/useArenaRuntime";
-
 
 // Optional: keep a gated warn helper (don’t also import debugWarn)
 const debugWarn = (...args: unknown[]) => {
   if (!ARENA_NET_DEBUG) return;
   console.warn(...args);
 };
-
 
 export default function ArenaPage() {
   const { arenaId = "" } = useParams();
@@ -58,7 +57,9 @@ export default function ArenaPage() {
   const [leaderboardLoading, setLeaderboardLoading] = useState(true);
   const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
-
+  const authUidRef = useRef<string | null>(null);
+  const presenceIdRef = useRef<string | null>(null);
+  const rosterLogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     players: presence,
@@ -85,6 +86,24 @@ export default function ArenaPage() {
   // Human title for header; never show the doc id
   const arenaTitle = arenaName ?? "Arena";
 
+  useEffect(() => {
+    const uid = auth.currentUser?.uid ?? user?.uid ?? null;
+    if (!uid) return;
+    authUidRef.current = uid;
+    if (!presenceIdRef.current) {
+      try {
+        presenceIdRef.current = loadTabPresenceId(uid);
+      } catch (error) {
+        console.warn("[PRESENCE] failed to load presenceId", error);
+        presenceIdRef.current = `${uid}-fallback`;
+      }
+    }
+    const authDisplayName = auth.currentUser?.displayName ?? null;
+    primePresenceDisplayNameCache(uid, authDisplayName);
+    if (player?.id) {
+      primePresenceDisplayNameCache(player.id, player.displayName ?? null);
+    }
+  }, [authReady, player?.displayName, player?.id, user?.uid]);
 
   useEffect(() => {
     debugLog("[UI] seats/host hidden (seatless mode)");
@@ -108,13 +127,31 @@ export default function ArenaPage() {
   }, [arenaId, presenceLoading]);
 
   useEffect(() => {
+    if (!arenaId) return;
     if (presenceLoading) return;
-    debugLog(
-      `[ARENA] roster arena=${arenaId} n=${rosterCount} names=${formattedRosterNames}`,
-      { rosterNames }
-    );
-  }, [arenaId, formattedRosterNames, presenceLoading, rosterCount, rosterNames]);
 
+    if (rosterLogTimerRef.current) {
+      clearTimeout(rosterLogTimerRef.current);
+      rosterLogTimerRef.current = null;
+    }
+
+    const ids = presence.map((entry) => entry.presenceId ?? entry.playerId ?? "");
+    rosterLogTimerRef.current = setTimeout(() => {
+      const joinedIds = ids.join(", ");
+      console.log(`[PRESENCE] roster stable=${ids.length} ids=[${joinedIds}]`);
+      debugLog(
+        `[ARENA] roster arena=${arenaId} n=${rosterCount} names=${formattedRosterNames}`,
+        { rosterNames },
+      );
+    }, 2_000);
+
+    return () => {
+      if (rosterLogTimerRef.current) {
+        clearTimeout(rosterLogTimerRef.current);
+        rosterLogTimerRef.current = null;
+      }
+    };
+  }, [arenaId, formattedRosterNames, presence, presenceLoading, rosterCount, rosterNames]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -233,20 +270,26 @@ export default function ArenaPage() {
       debugLog("[PRESENCE] join skipped: auth not ready", { arenaId });
       return;
     }
-    if (!user?.uid) {
-      debugLog("[PRESENCE] join skipped: missing uid", { arenaId });
+    const authUid = authUidRef.current;
+    if (!authUid) {
+      debugLog("[PRESENCE] join skipped: missing auth uid", { arenaId });
+      return;
+    }
+    const presenceId = presenceIdRef.current;
+    if (!presenceId) {
+      debugLog("[PRESENCE] join skipped: missing presenceId", { arenaId, authUid });
       return;
     }
 
-    const uid = user.uid;
-    const codename = player?.codename ?? uid.slice(0, 6);
+    const codename = player?.codename ?? authUid.slice(0, 6);
     const profileId = player?.id;
     let cancelled = false;
     let heartbeat: ReturnType<typeof setInterval> | null = null;
-    debugLog("[PRESENCE] join effect starting", { arenaId, uid, codename });
+    debugLog("[PRESENCE] join effect starting", { arenaId, authUid, presenceId, codename });
 
     const computeDisplayName = async (): Promise<string> => {
-      const fallback = `Player ${uid.slice(-2).toUpperCase()}`;
+      const suffix = authUid.slice(-2).toUpperCase();
+      const fallback = suffix ? `Player ${suffix}` : "Player";
       const direct = typeof player?.displayName === "string" ? player.displayName.trim() : "";
       if (direct.length > 0) {
         if (profileId) {
@@ -269,38 +312,51 @@ export default function ArenaPage() {
 
     const pushJoin = async () => {
       const nextDisplayName = await computeDisplayName();
-      await joinArena(arenaId, uid, codename, profileId, nextDisplayName);
-      console.log(`[PRESENCE] joined uid=${uid}`);
+      await joinArena(arenaId, { authUid, presenceId }, codename, profileId, nextDisplayName);
+      const safeDisplayName = nextDisplayName.replace(/"/g, '\\"');
+      console.log(
+        `[PRESENCE] joined authUid=${authUid} presenceId=${presenceId} displayName="${safeDisplayName}"`,
+      );
     };
 
     const pushHeartbeat = async () => {
       const nextDisplayName = await computeDisplayName();
-      await heartbeatArenaPresence(arenaId, uid, codename, profileId, nextDisplayName);
-      console.log(`[HEARTBEAT] lastSeen updated uid=${uid}`);
+      await heartbeatArenaPresence(
+        arenaId,
+        { authUid, presenceId },
+        codename,
+        profileId,
+        nextDisplayName,
+      );
+      const safeDisplayName = nextDisplayName.replace(/"/g, '\\"');
+      console.log(
+        `[HEARTBEAT] lastSeen updated authUid=${authUid} presenceId=${presenceId} displayName="${safeDisplayName}"`,
+      );
     };
 
     (async () => {
       try {
-        debugLog("[PRESENCE] ensureAnonAuth", { arenaId, uid });
+        debugLog("[PRESENCE] ensureAnonAuth", { arenaId, authUid, presenceId });
         await ensureAnonAuth();
         if (cancelled) return;
 
-        debugLog("[PRESENCE] joinArena", { arenaId, uid, codename, profileId });
+        debugLog("[PRESENCE] joinArena", { arenaId, authUid, presenceId, codename, profileId });
         await pushJoin();
         if (cancelled) return;
 
-        debugLog("[PRESENCE] join complete", { arenaId, uid });
+        debugLog("[PRESENCE] join complete", { arenaId, authUid, presenceId });
 
         debugLog("[PRESENCE] heartbeat schedule", {
           arenaId,
-          uid,
+          authUid,
+          presenceId,
           intervalMs: HEARTBEAT_INTERVAL_MS,
           activeWindowMs: HEARTBEAT_ACTIVE_WINDOW_MS,
           graceMs: PRESENCE_GRACE_BUFFER_MS,
         });
 
         heartbeat = setInterval(() => {
-          debugLog("[PRESENCE] heartbeat", { arenaId, uid });
+          debugLog("[PRESENCE] heartbeat", { arenaId, authUid, presenceId });
           pushHeartbeat().catch((e) => {
             debugWarn("[PRESENCE] heartbeat failed", e);
           });
@@ -320,8 +376,8 @@ export default function ArenaPage() {
       if (heartbeat) {
         clearInterval(heartbeat);
       }
-      debugLog("[PRESENCE] leaveArena", { arenaId, uid });
-      leaveArena(arenaId, uid).catch((e) => {
+      debugLog("[PRESENCE] leaveArena", { arenaId, authUid, presenceId });
+      leaveArena(arenaId, presenceId).catch((e) => {
         debugWarn("[PRESENCE] leave failed", e);
       });
     };
@@ -351,11 +407,12 @@ export default function ArenaPage() {
     return unsubscribe;
   }, []);
 
-  const meUid = user?.uid ?? null;
+  const meUid = authUidRef.current;
 
   const writerUid = state?.writerUid ?? null;
   const lastWriterUid = state?.lastWriter ?? null;
 
+  // Resolve host by authUid from state (prefer lastWriter for stability)
   const hostAuthUid = lastWriterUid ?? writerUid ?? null;
 
   const hostEntry = useMemo(() => {
@@ -502,7 +559,8 @@ export default function ArenaPage() {
           className="canvas-frame"
           style={{
             minHeight: 420,
-            background: "radial-gradient(circle at 50% 50%, rgba(255,255,255,0.04) 0 35%, transparent 60%), var(--bg-soft)",
+            background:
+              "radial-gradient(circle at 50% 50%, rgba(255,255,255,0.04) 0 35%, transparent 60%), var(--bg-soft)",
             display: "grid",
             placeItems: "center",
           }}
@@ -515,8 +573,7 @@ export default function ArenaPage() {
               Arena scene boots once auth and /state/current are ready.
             </div>
           )}
-{touchControlsEnabled && gameBooted ? <TouchControls /> : null}
-
+          {touchControlsEnabled && gameBooted ? <TouchControls /> : null}
         </div>
         <div className="card-footer">[NET] {debugFooter}</div>
       </section>

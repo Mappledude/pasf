@@ -69,28 +69,28 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
   const writerLogRef = useRef<string | null>(null);
   const writerPersistRef = useRef<string | null>(null);
 
+  // ---- Presence bookkeeping ----
+
+  const myPresenceEntry = useMemo(() => {
+    if (!meUid) return null;
+    return presence.find((entry) => entry.authUid === meUid) ?? null;
+  }, [meUid, presence]);
+
+  const myPresenceId = myPresenceEntry?.presenceId ?? null;
+
   const activePresence = useMemo(() => {
     const now = Date.now();
     const map = new Map<string, ActivePresenceInfo>();
     for (const entry of presence) {
       const presenceId = entry.presenceId ?? entry.playerId;
       const authUid = entry.authUid ?? entry.playerId;
-      if (!presenceId || !authUid) {
-        continue;
-      }
+      if (!presenceId || !authUid) continue;
+
       const lastSeenMs = entry.lastSeen ? Date.parse(entry.lastSeen) : Number.NaN;
-      if (!Number.isFinite(lastSeenMs)) {
-        continue;
-      }
-      if (now - lastSeenMs > ONLINE_WINDOW_MS) {
-        continue;
-      }
-      map.set(presenceId, {
-        presenceId,
-        authUid,
-        lastSeenMs,
-        entry,
-      });
+      if (!Number.isFinite(lastSeenMs)) continue;
+      if (now - lastSeenMs > ONLINE_WINDOW_MS) continue;
+
+      map.set(presenceId, { presenceId, authUid, lastSeenMs, entry });
     }
     return map;
   }, [presence]);
@@ -105,43 +105,36 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     return map;
   }, [activePresence]);
 
+  // ---- Writer election (prefer state, fall back to lexicographic) ----
+
   const stateWriterInfo = useMemo(() => {
     if (!stateWriterUid) return null;
     return activeByAuthUid.get(stateWriterUid) ?? null;
   }, [activeByAuthUid, stateWriterUid]);
 
   const electedWriterInfo = useMemo(() => {
-    if (stateWriterInfo) {
-      return stateWriterInfo;
-    }
+    if (stateWriterInfo) return stateWriterInfo;
     const sorted = [...activePresence.values()].sort((a, b) => a.authUid.localeCompare(b.authUid));
     return sorted[0] ?? null;
   }, [activePresence, stateWriterInfo]);
 
   const writerEntry = electedWriterInfo?.entry ?? null;
-
   const electedWriterUid = electedWriterInfo?.authUid ?? null;
   const electedWriterPresenceId = electedWriterInfo?.presenceId ?? null;
 
-  const myPresenceEntry = useMemo(() => {
-    if (!meUid) return null;
-    return presence.find((entry) => entry.authUid === meUid) ?? null;
-  }, [meUid, presence]);
-
-  const myPresenceId = myPresenceEntry?.presenceId ?? null;
+  // ---- Logging elected writer changes ----
 
   useEffect(() => {
     if (!arenaId) return;
     const logKey = electedWriterUid ?? "(none)";
-    if (writerLogRef.current === logKey) {
-      return;
-    }
+    if (writerLogRef.current === logKey) return;
     writerLogRef.current = logKey;
     if (DEBUG) {
       console.info(`[WRITER] elected ${logKey}`);
     }
   }, [arenaId, electedWriterUid]);
 
+  // Persist writer to /state/current if I'm the elected writer but state hasn't recorded it yet
   useEffect(() => {
     if (!arenaId) return;
     if (!meUid) return;
@@ -149,18 +142,15 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       writerPersistRef.current = null;
       return;
     }
-    if (stateWriterUid === electedWriterUid) {
-      return;
-    }
-    if (writerPersistRef.current === electedWriterUid) {
-      return;
-    }
+    if (stateWriterUid === electedWriterUid) return;
+    if (writerPersistRef.current === electedWriterUid) return;
+
     let cancelled = false;
     (async () => {
       try {
-        await writeArenaWriter(arenaId, electedWriterUid);
+        await writeArenaWriter(arenaId, electedWriterUid!);
         if (!cancelled) {
-          writerPersistRef.current = electedWriterUid;
+          writerPersistRef.current = electedWriterUid!;
         }
       } catch (error) {
         if (!cancelled && DEBUG) {
@@ -173,6 +163,8 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     };
   }, [arenaId, electedWriterUid, meUid, stateWriterUid]);
 
+  // ---- Teardown helper ----
+
   const teardown = useCallback(() => {
     const cleanup = cleanupRef.current;
     cleanupRef.current = null;
@@ -180,9 +172,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       try {
         cleanup();
       } catch (error) {
-        if (DEBUG) {
-          console.warn("[ARENA] runtime cleanup failed", error);
-        }
+        if (DEBUG) console.warn("[ARENA] runtime cleanup failed", error);
       }
     } else if (gameRef.current) {
       destroyGame(gameRef.current);
@@ -206,11 +196,14 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
 
   useEffect(() => teardown, [teardown]);
 
+  // ---- Boot gating ----
+
   const shouldBoot = useMemo(
     () => Boolean(arenaId && authReady && stateReady && meUid && myPresenceId),
     [arenaId, authReady, myPresenceId, stateReady, meUid],
   );
 
+  // Key binder lifecycle
   useEffect(() => {
     if (!shouldBoot || !arenaId || !meUid) {
       if (keyBinderRef.current) {
@@ -220,9 +213,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       return;
     }
 
-    if (typeof window === "undefined") {
-      return;
-    }
+    if (typeof window === "undefined") return;
 
     if (!keyBinderRef.current) {
       keyBinderRef.current = createKeyBinder(window);
@@ -236,22 +227,21 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     };
   }, [arenaId, meUid, shouldBoot]);
 
+  // ActionBus lifecycle (session-scoped presenceId)
   useEffect(() => {
     if (!shouldBoot || !arenaId || !meUid || !myPresenceId) {
       disposeActionBus();
       return;
     }
 
-    const playerCodename = codename ?? meUid.slice(0, 6);
-
+    const playerCodename = codename ?? myPresenceId.slice(0, 6);
     let cancelled = false;
 
     (async () => {
       try {
         await initActionBus({
           arenaId,
-          playerId: myPresenceId,
-          authUid: meUid,
+          presenceId: myPresenceId,
           codename: playerCodename,
         });
       } catch (error) {
@@ -267,16 +257,12 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     };
   }, [arenaId, codename, meUid, myPresenceId, shouldBoot]);
 
-  const writerUid = electedWriterUid;
-  const isWriter = Boolean(meUid && writerUid && writerUid === meUid);
-
+  // Host writer detail log (optional)
   useEffect(() => {
     if (!arenaId) return;
     const joinedAt = writerEntry?.joinedAt ?? null;
     const logKey = writerEntry ? `${writerEntry.authUid ?? "(unknown)"}|${joinedAt ?? "(missing)"}` : "none";
-    if (hostLogRef.current === logKey) {
-      return;
-    }
+    if (hostLogRef.current === logKey) return;
     hostLogRef.current = logKey;
     if (DEBUG && writerEntry) {
       console.info(
@@ -285,6 +271,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
     }
   }, [arenaId, writerEntry, writerEntry?.authUid, writerEntry?.joinedAt, writerEntry?.lastSeen, writerEntry?.playerId]);
 
+  // Boot Phaser + scene
   useEffect(() => {
     if (!shouldBoot || !myPresenceId) {
       teardown();
@@ -339,9 +326,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       } catch (error) {
         teardown();
         if (!cancelled) {
-          if (DEBUG) {
-            console.error("[ARENA] failed to boot runtime", error);
-          }
+          if (DEBUG) console.error("[ARENA] failed to boot runtime", error);
           onBootError?.("Failed to start local host session.");
         }
       }
@@ -354,6 +339,10 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
       teardown();
     };
   }, [arenaId, canvasRef, codename, meUid, myPresenceId, onBootError, shouldBoot, teardown]);
+
+  // Host loop lifecycle (only if I'm the elected writer)
+  const writerUid = electedWriterUid;
+  const isWriter = Boolean(meUid && writerUid && writerUid === meUid);
 
   useEffect(() => {
     if (!shouldBoot || !arenaId || !meUid) {
@@ -398,9 +387,7 @@ export function useArenaRuntime(options: UseArenaRuntimeOptions): UseArenaRuntim
         });
         hostLoopRef.current = controller;
       } catch (error) {
-        if (DEBUG) {
-          console.error("[ARENA] host bootstrap failed", error);
-        }
+        if (DEBUG) console.error("[ARENA] host bootstrap failed", error);
         if (!cancelled) {
           onBootError?.("Failed to start local host session.");
           teardown();
