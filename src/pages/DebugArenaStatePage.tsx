@@ -5,7 +5,7 @@ import { doc, onSnapshot } from "firebase/firestore";
 
 export default function DebugArenaStatePage() {
   const { arenaId: routeArenaId } = useParams<{ arenaId?: string }>();
-  const arenaId = useMemo(() => (routeArenaId ?? "CLIFF").toString(), [routeArenaId]);
+  const arenaId = useMemo(() => routeArenaId?.toUpperCase() ?? "CLIFF", [routeArenaId]);
   const [json, setJson] = useState<any>(null);
   const [exists, setExists] = useState<boolean>(false);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle");
