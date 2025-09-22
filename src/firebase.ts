@@ -664,18 +664,8 @@ export const watchArenaPresence = (
           ? data.authUid.trim()
           : undefined;
       return {
-return {
-  presenceId: docSnap.id,                  // ✅ doc id on READ
-  playerId: data.playerId ?? docSnap.id,
-  codename: data.codename ?? "Agent",
-  displayName,
-  joinedAt: data.joinedAt?.toDate?.().toISOString?.(),
-  authUid: typeof data.authUid === "string" ? data.authUid : undefined, // ✅ read from data
-  profileId: data.profileId,
-  lastSeen: data.lastSeen?.toDate?.().toISOString?.(),
-  expireAt: data.expireAt?.toDate?.().toISOString?.(),
-} as ArenaPresenceEntry;
-        playerId: data.playerId ?? docSnap.id,
+        presenceId,
+        playerId: data.playerId ?? presenceId,
         codename: data.codename ?? "Agent",
         displayName,
         joinedAt: data.joinedAt?.toDate?.().toISOString?.(),
@@ -774,58 +764,6 @@ export function watchArenaState(arenaId: string, cb: (state: any) => void) {
       unsubscribe = null;
     }
   };
-}
-
-export interface ArenaInputWrite {
-  presenceId: string;
-  authUid?: string;
-  left?: boolean;
-  right?: boolean;
-  jump?: boolean;
-  attack?: boolean;
-  codename?: string;
-  attackSeq?: number;
-}
-
-export async function writeArenaInput(
-  arenaId: string,
-  input: ArenaInputWrite
-): Promise<void> {
-  await ensureAnonAuth();
-
-  const uid = auth.currentUser?.uid;
-  if (!uid) throw new Error("No authenticated user");
-
-  const ref = arenaInputDoc(arenaId, input.presenceId);
-  const payload: Record<string, unknown> = {
-    playerId: input.presenceId,
-    presenceId: input.presenceId,
-    authUid: uid, // satisfies rules: request.resource.data.authUid == request.auth.uid
-    left: input.left,
-    right: input.right,
-    jump: input.jump,
-    attack: input.attack,
-    codename: input.codename,
-    attackSeq: input.attackSeq,
-    updatedAt: serverTimestamp(),
-  };
-
-  await setDoc(ref, payload, { merge: true });
-}
-
-
-    updatedAt: serverTimestamp(),
-  };
-  if (typeof input.authUid === "string" && input.authUid.length > 0) {
-    payload.authUid = input.authUid;
-  }
-  if (typeof input.left === "boolean") payload.left = input.left;
-  if (typeof input.right === "boolean") payload.right = input.right;
-  if (typeof input.jump === "boolean") payload.jump = input.jump;
-  if (typeof input.attack === "boolean") payload.attack = input.attack;
-  if (typeof input.attackSeq === "number") payload.attackSeq = input.attackSeq;
-  if (input.codename) payload.codename = input.codename;
-  await setDoc(ref, payload, { merge: true });
 }
 
 export async function deleteArenaInput(arenaId: string, presenceId: string): Promise<void> {
