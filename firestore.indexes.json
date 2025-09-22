@@ -7,6 +7,14 @@
         { "fieldPath": "arenaId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "leaderboard",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "wins", "order": "DESCENDING" },
+        { "fieldPath": "lastWinAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
