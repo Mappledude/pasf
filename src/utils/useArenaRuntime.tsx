@@ -26,6 +26,7 @@ export function useArenaRuntime(
   const offRef = useRef<() => void>();
   const stopPresenceRef = useRef<() => Promise<void>>();
   const stopWriterRef = useRef<() => void>();
+  const writerDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Boot with retry: auth → start presence (first) → try seeding arena (non-fatal)
   useEffect(() => {
@@ -180,16 +181,26 @@ export function useArenaRuntime(
 
   // Writer election (lexicographically smallest presenceId)
   useEffect(() => {
+    const clearTimer = () => {
+      if (writerDebounceRef.current) {
+        clearTimeout(writerDebounceRef.current);
+        writerDebounceRef.current = null;
+      }
+    };
+
+    clearTimer();
+
     if (!arenaId || !presenceId) {
-      return () => {
-        stopWriterRef.current?.();
-        stopWriterRef.current = undefined;
-      };
+      stopWriterRef.current?.();
+      stopWriterRef.current = undefined;
+      return clearTimer;
     }
 
-    const timer = setTimeout(() => {
-      const leader = [...live].map((p) => p.id).sort()[0];
-      const amWriter = leader && leader === presenceId;
+    const rosterIds = live.map((p) => p.id);
+
+    writerDebounceRef.current = setTimeout(() => {
+      const leader = [...rosterIds].sort()[0];
+      const amWriter = Boolean(leader && leader === presenceId);
 
       if (!amWriter) {
         if (stopWriterRef.current) {
@@ -211,10 +222,8 @@ export function useArenaRuntime(
       console.info("[WRITER] elected", { presenceId, arenaId });
     }, WRITER_ELECTION_DEBOUNCE_MS);
 
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [arenaId, presenceId, JSON.stringify(live.map((p) => p.id).sort())]);
+    return clearTimer;
+  }, [arenaId, presenceId, live]);
 
   // Input enqueue bound to current presence
   const enqueueInput = useMemo(() => {

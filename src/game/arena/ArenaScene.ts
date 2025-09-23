@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { Player } from "../entities/Player";
 import { RemoteOpponent } from "../entities/RemoteOpponent";
+import { watchArenaPresence } from "../../firebase";
 import {
   createMatchChannel,
   type MatchChannel,
@@ -77,6 +78,8 @@ export default class ArenaScene extends Phaser.Scene {
   private channel?: MatchChannel;
   private snapbuf = new SnapshotBuffer<AuthoritativeSnapshot>(6);
   private remoteActors = new Map<string, RemoteActorState>();
+  private rosterUnsub?: () => void;
+  private presenceRosterIds = new Set<string>();
 
   // role/seat (optional UI later)
   private isHost = false;
@@ -142,6 +145,36 @@ export default class ArenaScene extends Phaser.Scene {
         return;
       }
       this.snapbuf.push(snap, this.time.now);
+    });
+
+    this.rosterUnsub = watchArenaPresence(this.arenaId, (players) => {
+      const rosterIds = new Set<string>();
+      const now = this.time.now;
+
+      for (const player of players) {
+        if (player.id === this.me.id) {
+          continue;
+        }
+        rosterIds.add(player.id);
+        const meta = this.ensureRemoteActor(player.id);
+        meta.actor.setActive(true);
+        if (player.displayName) {
+          meta.codename = player.displayName;
+          meta.actor.setCodename(player.displayName);
+        }
+        meta.lastSeenAt = now;
+      }
+
+      this.presenceRosterIds.clear();
+      for (const id of rosterIds) {
+        this.presenceRosterIds.add(id);
+      }
+
+      for (const id of [...this.remoteActors.keys()]) {
+        if (!rosterIds.has(id)) {
+          this.destroyRemoteActor(id);
+        }
+      }
     });
 
     // Clean teardown
@@ -463,7 +496,7 @@ export default class ArenaScene extends Phaser.Scene {
 
   private cleanupRemoteActors(seen: Set<string>) {
     for (const id of [...this.remoteActors.keys()]) {
-      if (!seen.has(id)) {
+      if (!seen.has(id) && !this.presenceRosterIds.has(id)) {
         this.destroyRemoteActor(id);
       }
     }
@@ -656,6 +689,12 @@ export default class ArenaScene extends Phaser.Scene {
   }
 
   private handleShutdown() {
+    if (this.rosterUnsub) {
+      this.rosterUnsub();
+      this.rosterUnsub = undefined;
+    }
+    this.presenceRosterIds.clear();
+
     if (this.textureAddHandler) {
       this.textures.off(Phaser.Textures.Events.ADD, this.textureAddHandler, this);
       this.textureAddHandler = undefined;
