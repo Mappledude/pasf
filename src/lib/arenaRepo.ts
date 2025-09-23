@@ -1,55 +1,70 @@
 import { auth, db } from "../firebase";
-import { collection, doc, getDoc, serverTimestamp, setDoc, type Firestore } from "firebase/firestore";
+import { doc, getDoc, type Firestore } from "firebase/firestore";
 
 export const ensureArenaFixed = async (arenaId: string, database: Firestore = db) => {
   const aRef = doc(database, "arenas", arenaId);
   const sRef = doc(database, "arenas", arenaId, "state", "current");
-  const aSnap = await getDoc(aRef);
   let createdArena = false;
-  if (!aSnap.exists()) {
-    await setDoc(
-      aRef,
-      {
-        name: arenaId,
-        createdAt: serverTimestamp(),
-      },
-      { merge: true },
-    );
-    createdArena = true;
-  }
-  const sSnap = await getDoc(sRef);
   let createdState = false;
-  if (!sSnap.exists()) {
-    await setDoc(
-      sRef,
-      {
-        createdAt: serverTimestamp(),
-        writerUid: null,
-      },
-      { merge: true },
-    );
-    createdState = true;
-  }
-
   let probeWarning = false;
+
   try {
-    const probeRef = doc(collection(aRef, "state"), "bootstrap-probe");
-    await setDoc(
-      probeRef,
-      { at: serverTimestamp(), ok: true, who: auth.currentUser?.uid ?? "unknown" },
-      { merge: true },
-    );
-    console.info("[ARENA] rules-probe ok", { arenaId });
+    const aSnap = await getDoc(aRef);
+    createdArena = !aSnap.exists();
   } catch (error: any) {
     const code = error?.code ?? error?.name;
     const message = String(error?.message ?? error);
     if (code === "permission-denied") {
-      console.warn("[ARENA] rules-probe non-fatal", { arenaId, code, message });
       probeWarning = true;
+      console.warn("[ARENA] arena-read denied", {
+        arenaId,
+        code,
+        message,
+        uid: auth.currentUser?.uid ?? null,
+      });
     } else {
-      console.error("[ARENA] rules-probe failed", { arenaId, code, message });
       throw error;
     }
   }
+
+  try {
+    const sSnap = await getDoc(sRef);
+    createdState = !sSnap.exists();
+  } catch (error: any) {
+    const code = error?.code ?? error?.name;
+    const message = String(error?.message ?? error);
+    if (code === "permission-denied") {
+      probeWarning = true;
+      console.warn("[ARENA] state-read denied", {
+        arenaId,
+        code,
+        message,
+        uid: auth.currentUser?.uid ?? null,
+      });
+    } else {
+      throw error;
+    }
+  }
+
+  try {
+    await getDoc(doc(database, "arenas", arenaId, "state", "bootstrap-probe"));
+    console.info("[ARENA] rules-probe read ok", { arenaId });
+  } catch (error: any) {
+    const code = error?.code ?? error?.name;
+    const message = String(error?.message ?? error);
+    if (code === "permission-denied") {
+      probeWarning = true;
+      console.warn("[ARENA] rules-probe read denied", {
+        arenaId,
+        code,
+        message,
+        uid: auth.currentUser?.uid ?? null,
+      });
+    } else {
+      console.error("[ARENA] rules-probe read failed", { arenaId, code, message });
+      throw error;
+    }
+  }
+
   return { aRef, sRef, createdArena, createdState, probeWarning };
 };

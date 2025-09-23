@@ -418,6 +418,30 @@ async function withFreshEnvironment(run) {
 
 describe("firebase arena integration (emulated)", () => {
 
+  it("runtime boot without admin creation keeps arena doc absent", async () => {
+    await withFreshEnvironment(async ({ firebase }) => {
+      const arenaId = "ARENA-BOOT-READONLY";
+      const { ensureArenaFixed } = await import("../src/lib/arenaRepo.js");
+      const { startPresence } = await import("../src/arena/presence.js");
+
+      await firebase.ensureAnonAuth();
+      await ensureArenaFixed(arenaId, firebase.db);
+
+      const { stop } = await startPresence(arenaId, undefined, { displayName: "Alpha" });
+      await stop();
+
+      const arenaSnap = await firestoreModule.getDoc(
+        firestoreModule.doc(firebase.db, "arenas", arenaId),
+      );
+      expect(arenaSnap.exists()).toBe(false);
+
+      const stateSnap = await firestoreModule.getDoc(
+        firestoreModule.doc(firebase.db, "arenas", arenaId, "state", "current"),
+      );
+      expect(stateSnap.exists()).toBe(false);
+    });
+  });
+
   it("dual presence creation stores distinct auth bindings", async () => {
     await withFreshEnvironment(async ({ firebase }) => {
       const arenaId = "ARENA-DUAL";

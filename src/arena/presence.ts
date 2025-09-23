@@ -1,5 +1,5 @@
 import { auth, db } from "../firebase";
-import { deleteDoc, doc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
+import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 
 const HEARTBEAT_MS = 5000;
 const MAX_CONSECUTIVE_FAILURES = 3;
@@ -12,14 +12,10 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
   }
 
   try {
-    await setDoc(
-      doc(db, "arenas", arenaId),
-      { rulesProbeAt: serverTimestamp(), rulesProbeBy: uid },
-      { merge: true },
-    );
-    console.info("[ARENA] rules-probe ok", { arenaId });
+    await getDoc(doc(db, "arenas", arenaId));
+    console.info("[ARENA] rules-probe read ok", { arenaId });
   } catch (e: any) {
-    console.error("[ARENA] rules-probe failed", {
+    console.error("[ARENA] rules-probe read failed", {
       arenaId,
       code: e?.code,
       message: e?.message,
