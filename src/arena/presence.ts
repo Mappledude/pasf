@@ -1,10 +1,15 @@
 import { auth, db } from "../firebase";
 import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
+import { getDisplayName } from "../services/users";
 
 const HEARTBEAT_MS = 5000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 
-export const startPresence = async (arenaId: string, playerId?: string, profile?: { displayName?: string }) => {
+export const startPresence = async (
+  arenaId: string,
+  playerId?: string,
+  _profile?: { displayName?: string },
+) => {
   const uid = auth.currentUser?.uid;
   if (!uid) {
     console.error("[PRESENCE] write-failed", { reason: "no-auth" });
@@ -26,7 +31,8 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
   const ref = doc(db, "arenas", arenaId, "presence", presenceId);
   const path = ref.path;
 
-  const displayName = profile?.displayName?.trim() || `Player ${uid.slice(-2)}`;
+  const displayName = await getDisplayName(db);
+  let currentDisplayName = displayName;
 
   const createPayload = {
     authUid: uid,
@@ -39,6 +45,7 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
     lastSeenSrv: serverTimestamp(),
     heartbeatMs: HEARTBEAT_MS,
     arenaId,
+    dn: displayName,
   };
 
   console.info("[PRESENCE] write-attempt", {
@@ -91,10 +98,23 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
     });
 
     try {
+      let latestDisplayName: string | undefined;
+      try {
+        latestDisplayName = await getDisplayName(db);
+      } catch (nameErr) {
+        console.warn("[PRESENCE] display-name-refresh-failed", nameErr);
+      }
+      const trimmed = latestDisplayName?.trim();
+      if (trimmed && trimmed !== currentDisplayName) {
+        currentDisplayName = trimmed;
+      }
+
       await updateDoc(ref, {
         stage: "beat",
         lastSeen: serverTimestamp(),
         lastSeenSrv: serverTimestamp(),
+        displayName: currentDisplayName,
+        dn: currentDisplayName,
       });
       consecutiveFailures = 0;
       console.info("[PRESENCE] beat", { arenaId, presenceId, uid, path });
@@ -197,5 +217,5 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
     await deletePresence("stop");
   };
 
-  return { presenceId, stop };
+  return { presenceId, stop, displayName };
 };

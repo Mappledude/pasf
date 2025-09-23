@@ -20,7 +20,7 @@ export default function ArenaPage() {
   const { player } = useAuth();
 
   // Runtime hook provides presence + inputs (and any boot error upstream)
-  const { presenceId, live, stable, enqueueInput, bootError, probeWarning } =
+  const { presenceId, live, stable, enqueueInput, bootError, probeWarning, displayName: presenceDisplayName } =
     useArenaRuntime(arenaId);
 
   // Phaser mounts regardless of Firestore success/failure
@@ -31,11 +31,12 @@ export default function ArenaPage() {
   const [gameReady, setGameReady] = useState(false);
   const [gameBootError, setGameBootError] = useState<string | null>(null);
 
-  const codename = useMemo(() => {
-    if (player?.codename?.trim()) return player.codename.trim();
+  const sceneDisplayName = useMemo(() => {
+    if (presenceDisplayName?.trim()) return presenceDisplayName.trim();
     if (player?.displayName?.trim()) return player.displayName.trim();
+    if (player?.codename?.trim()) return player.codename.trim();
     return "Agent";
-  }, [player?.codename, player?.displayName]);
+  }, [player?.codename, player?.displayName, presenceDisplayName]);
 
   // Boot Phaser (unconditional); never block canvas on Firestore
   useEffect(() => {
@@ -131,7 +132,7 @@ export default function ArenaPage() {
       db,
       arenaId,
       uid: presenceId,
-      dn: codename,
+      dn: sceneDisplayName,
     };
 
     const existing = sceneRef.current;
@@ -168,7 +169,7 @@ export default function ArenaPage() {
       }
       sceneRef.current = null;
     };
-  }, [arenaId, codename, gameReady, presenceId]);
+  }, [arenaId, sceneDisplayName, gameReady, presenceId]);
 
   // Non-blocking overlay to surface boot/runtime status
   const overlayState = useMemo(() => {

@@ -5,18 +5,23 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isSelf(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
     match /arenas/{arenaId} {
       allow read, write: if authed();
 
       match /presence/{presenceId} {
-        allow read, write: if authed();
+        allow read: if true;
+        allow create, update: if isSelf(presenceId);
+        allow delete: if isSelf(presenceId);
       }
 
       match /actors/{actorUid} {
         allow read: if true;
         allow create, update, delete:
-          if request.auth != null
-          && request.auth.uid == actorUid
+          if isSelf(actorUid)
           && request.resource.data.uid == request.auth.uid;
       }
 
@@ -35,6 +40,11 @@ service cloud.firestore {
 
     match /players/{playerId} {
       allow read, write: if authed();
+    }
+
+    match /users/{uid} {
+      allow read: if isSelf(uid);
+      allow create, update: if isSelf(uid);
     }
 
     match /leaderboard/{entryId} {

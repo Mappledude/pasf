@@ -49,6 +49,7 @@ export function useArenaRuntime(
   const [nextRetryAt, setNextRetryAt] = useState<number | undefined>(undefined);
   const [lastBootErrorAt, setLastBootErrorAt] = useState<number | null>(null);
   const [probeWarning, setProbeWarning] = useState(false);
+  const [displayName, setDisplayName] = useState<string | undefined>(undefined);
   const [writerMeta, setWriterMeta] = useState<{ writerUid: string | null; writerLeaseUpdatedAt?: number }>({
     writerUid: null,
     writerLeaseUpdatedAt: undefined,
@@ -86,6 +87,7 @@ export function useArenaRuntime(
     const resetRuntime = () => {
       setPresenceId(undefined);
       setProbeWarning(false);
+      setDisplayName(undefined);
       // stop presence heartbeat if running
       const stopPresence = stopPresenceRef.current;
       stopPresenceRef.current = undefined;
@@ -139,12 +141,14 @@ export function useArenaRuntime(
         setProbeWarning(nonFatalProbe);
 
         // 3) Start presence once seeding completes (or is skipped)
-        const { presenceId: myPresenceId, stop } = await startPresence(arenaId, playerId, profile);
+        const { presenceId: myPresenceId, stop, displayName: resolvedDisplayName } =
+          await startPresence(arenaId, playerId, profile);
         if (cancelled) {
           await stop();
           return;
         }
         setPresenceId(myPresenceId);
+        setDisplayName(resolvedDisplayName);
         setBootError(null);
         setLastBootErrorAt(null);
         setNextRetryAt(undefined);
@@ -193,6 +197,7 @@ export function useArenaRuntime(
       if (stopPresence) {
         void stopPresence();
       }
+      setDisplayName(undefined);
     };
   }, [arenaId, playerId, profile]);
 
@@ -380,5 +385,6 @@ export function useArenaRuntime(
     lastBootErrorAt,
     nextRetryAt,
     probeWarning,
+    displayName,
   };
 }

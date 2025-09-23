@@ -1,13 +1,6 @@
 import Phaser from "phaser";
-import {
-  collection,
-  doc,
-  onSnapshot,
-  serverTimestamp,
-  setDoc,
-  type Firestore,
-  type QueryDocumentSnapshot,
-} from "firebase/firestore";
+import { collection, onSnapshot, type Firestore, type QueryDocumentSnapshot } from "firebase/firestore";
+import { upsertMyActor } from "../services/actors";
 
 type Facing = "L" | "R";
 type Anim = "idle" | "walk" | "attack";
@@ -19,6 +12,14 @@ type Actor = {
   y: number;
   facing: Facing;
   anim: Anim;
+  seq: number;
+  displayName?: string;
+};
+
+type RemoteActorVisual = {
+  container: Phaser.GameObjects.Container;
+  sprite: Phaser.GameObjects.Sprite;
+  label: Phaser.GameObjects.Text;
   seq: number;
 };
 
@@ -33,11 +34,25 @@ function makePlaceholderTexture(scene: Phaser.Scene, key: string) {
   if (scene.textures.exists(key)) {
     return;
   }
-  const graphics = scene.make.graphics({ x: 0, y: 0, add: false });
+  const graphics = scene.add.graphics({ x: 0, y: 0 });
+  graphics.setVisible(false);
   graphics.fillStyle(0xf97316, 1);
   graphics.fillRect(0, 0, 28, 36);
   graphics.generateTexture(key, 28, 36);
   graphics.destroy();
+}
+
+const blockedKeys = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "]);
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "keydown",
+    (event) => {
+      if (blockedKeys.has(event.key)) {
+        event.preventDefault();
+      }
+    },
+    { passive: false },
+  );
 }
 
 export class ArenaScene extends Phaser.Scene {
@@ -45,10 +60,12 @@ export class ArenaScene extends Phaser.Scene {
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: Record<"up" | "down" | "left" | "right", Phaser.Input.Keyboard.Key>;
   private me!: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
-  private others = new Map<string, Phaser.GameObjects.Sprite>();
+  private meLabel?: Phaser.GameObjects.Text;
+  private others = new Map<string, RemoteActorVisual>();
   private seq = 0;
   private lastSend = 0;
   private unsubscribeActors?: () => void;
+  private meLabelText = "";
 
   constructor(opts: ArenaSceneOptions) {
     super({ key: "arena" });
@@ -63,6 +80,7 @@ export class ArenaScene extends Phaser.Scene {
 
   updateOptions(opts: Partial<ArenaSceneOptions>) {
     this.opts = { ...this.opts, ...opts };
+    this.refreshLocalLabel();
   }
 
   preload() {
@@ -84,19 +102,30 @@ export class ArenaScene extends Phaser.Scene {
     body.setMaxSpeed(240);
     body.setAllowRotation(false);
 
-    this.cursors = this.input.keyboard.createCursorKeys();
+    const keyboard = this.input.keyboard;
+    if (!keyboard) {
+      throw new Error("keyboard-unavailable");
+    }
+    this.cursors = keyboard.createCursorKeys();
     this.wasd = {
-      up: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
-      down: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
-      left: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
-      right: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
+      up: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
+      down: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
+      left: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
+      right: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
     };
 
     this.subscribeActors();
 
+    this.meLabel = this.add
+      .text(this.me.x, this.me.y - 32, this.getLocalDisplayName(), {
+        fontSize: "12px",
+        color: "#f8fafc",
+        fontFamily: '"JetBrains Mono", monospace',
+      })
+      .setOrigin(0.5, 1);
+    this.meLabelText = this.getLocalDisplayName();
+
     void this.publishMyActor({
-      uid: this.opts.uid,
-      dn: this.opts.dn,
       x: this.me.x,
       y: this.me.y,
       facing: "R",
@@ -132,11 +161,12 @@ export class ArenaScene extends Phaser.Scene {
     this.me.setData("facing", facing);
     this.me.setFlipX(facing === "L");
 
+    this.updateLocalLabelPosition();
+    this.refreshLocalLabel();
+
     if (time - this.lastSend > 66) {
       this.lastSend = time;
       void this.publishMyActor({
-        uid: this.opts.uid,
-        dn: this.opts.dn,
         x: this.me.x,
         y: this.me.y,
         facing,
@@ -163,8 +193,8 @@ export class ArenaScene extends Phaser.Scene {
         }
 
         if (change.type === "removed") {
-          const sprite = this.others.get(actorUid);
-          sprite?.destroy();
+          const visual = this.others.get(actorUid);
+          visual?.container.destroy(true);
           this.others.delete(actorUid);
           return;
         }
@@ -173,29 +203,40 @@ export class ArenaScene extends Phaser.Scene {
         const x = typeof data.x === "number" ? data.x : 0;
         const y = typeof data.y === "number" ? data.y : 0;
         const facing = (data.facing as Facing | undefined) ?? "R";
+        const label = this.resolveDisplayName(data);
 
-        let sprite = this.others.get(actorUid);
-        if (!sprite) {
-          sprite = this.add.sprite(x, y, "stick");
+        let visual = this.others.get(actorUid);
+        if (!visual) {
+          const container = this.add.container(x, y);
+          const sprite = this.add.sprite(0, 0, "stick");
           sprite.setOrigin(0.5, 0.5);
-          sprite.setDataEnabled();
-          this.others.set(actorUid, sprite);
+          const nameLabel = this.add
+            .text(0, -32, label, {
+              fontSize: "12px",
+              color: "#f8fafc",
+              fontFamily: '"JetBrains Mono", monospace',
+            })
+            .setOrigin(0.5, 1);
+          container.add([sprite, nameLabel]);
+          visual = { container, sprite, label: nameLabel, seq: Number.NEGATIVE_INFINITY };
+          this.others.set(actorUid, visual);
         }
 
-        const prevSeq = (sprite.getData("seq") as number | undefined) ?? 0;
-        if (seq <= prevSeq) {
+        if (seq <= visual.seq) {
           return;
         }
-        sprite.setData("seq", seq);
+        visual.seq = seq;
+
+        visual.label.setText(label);
+        visual.sprite.setFlipX(facing === "L");
 
         this.tweens.add({
-          targets: sprite,
+          targets: visual.container,
           x,
           y,
           duration: 80,
           ease: "Linear",
         });
-        sprite.setFlipX(facing === "L");
       });
     });
   }
@@ -203,27 +244,46 @@ export class ArenaScene extends Phaser.Scene {
   private handleShutdown() {
     this.unsubscribeActors?.();
     this.unsubscribeActors = undefined;
-    this.others.forEach((sprite) => sprite.destroy());
+    this.others.forEach((visual) => visual.container.destroy(true));
     this.others.clear();
+    this.meLabel?.destroy();
+    this.meLabel = undefined;
   }
 
-  private async publishMyActor(actor: Actor) {
-    const { db, arenaId, uid, dn } = this.opts;
-    const ref = doc(db, "arenas", arenaId, "actors", uid);
-    await setDoc(
-      ref,
-      {
-        uid,
-        dn,
-        x: Math.round(actor.x),
-        y: Math.round(actor.y),
-        facing: actor.facing,
-        anim: actor.anim,
-        seq: actor.seq,
-        ts: serverTimestamp(),
-      },
-      { merge: true },
-    );
+  private async publishMyActor(patch: Pick<Actor, "x" | "y" | "facing" | "anim" | "seq">) {
+    const { db, arenaId, uid } = this.opts;
+    await upsertMyActor(db, arenaId, uid, patch);
+  }
+
+  private getLocalDisplayName(): string {
+    const hint = typeof this.opts.dn === "string" ? this.opts.dn.trim() : "";
+    if (hint.length > 0) return hint;
+    const suffix = this.opts.uid.slice(-4) || "0000";
+    return `Player ${suffix}`;
+  }
+
+  private refreshLocalLabel() {
+    if (!this.meLabel) return;
+    const next = this.getLocalDisplayName();
+    if (next !== this.meLabelText) {
+      this.meLabel.setText(next);
+      this.meLabelText = next;
+    }
+  }
+
+  private updateLocalLabelPosition() {
+    if (!this.meLabel) return;
+    this.meLabel.setPosition(this.me.x, this.me.y - 32);
+  }
+
+  private resolveDisplayName(data: Partial<Actor>): string {
+    const dn = typeof data.dn === "string" ? data.dn.trim() : "";
+    if (dn.length > 0) return dn;
+    const legacy = typeof data.displayName === "string" ? data.displayName.trim() : "";
+    if (legacy.length > 0) return legacy;
+    const uid = typeof data.uid === "string" ? data.uid : "";
+    const suffix = uid.slice(-4) || "0000";
+    return `Player ${suffix}`;
   }
 }
 
