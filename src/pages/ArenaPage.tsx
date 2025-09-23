@@ -19,8 +19,8 @@ const DEFAULT_SPAWN = {
 
 export default function ArenaPage() {
   // Route param is /arena/:id — default to CLIFF and normalize to uppercase.
-  const params = useParams<{ id?: string }>();
-  const arenaId = (params.id ?? "CLIFF").toUpperCase();
+  const { arenaId: routeArenaId } = useParams<{ arenaId?: string }>();
+  const arenaId = (routeArenaId ?? "CLIFF").toUpperCase();
 
   // Auth (for display/codename only)
   const { user, player } = useAuth();
