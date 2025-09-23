@@ -10,6 +10,7 @@ import {
 import type { PlayerProfile } from "../types/models";
 import { useArenas } from "../utils/useArenas";
 import { useAuth } from "../context/AuthContext";
+import AdminControls from "../components/AdminControls";
 import DebugDock from "../components/DebugDock";
 
 const extractErrorMessage = (error: unknown) => {
@@ -143,181 +144,183 @@ const AdminPage = () => {
           {statusMessage}
         </div>
 
-      <div className="grid grid-2" style={{ alignItems: "start", gap: 24 }}>
-        <div className="grid" style={{ gap: 24 }}>
-          <section className="card">
-            <div className="card-header">
-              <h2>Boss Profile</h2>
-              <span className="muted">Identity</span>
-            </div>
-            <form onSubmit={handleEnsureBossProfile}>
-              <fieldset disabled={formsDisabled} className="fieldset">
-                <label htmlFor="boss-name">Display name</label>
-                <input
-                  id="boss-name"
-                  value={bossName}
-                  onChange={(e) => setBossName(e.target.value)}
-                  required
-                />
-                <button className="button" type="submit">
-                  Save Boss Profile
-                </button>
-              </fieldset>
-            </form>
-          </section>
+        <AdminControls />
 
-          <section className="card">
-            <div className="card-header">
-              <h2>Add Player</h2>
-              <span className="muted">Credentials</span>
-            </div>
-            <form onSubmit={handleCreatePlayer}>
-              <fieldset disabled={formsDisabled} className="fieldset">
-                <label htmlFor="player-codename">Codename</label>
-                <input
-                  id="player-codename"
-                  value={playerCodename}
-                  onChange={(e) => setPlayerCodename(e.target.value)}
-                  placeholder="e.g. midnight-spark"
-                  required
-                />
+        <div className="grid grid-2" style={{ alignItems: "start", gap: 24 }}>
+          <div className="grid" style={{ gap: 24 }}>
+            <section className="card">
+              <div className="card-header">
+                <h2>Boss Profile</h2>
+                <span className="muted">Identity</span>
+              </div>
+              <form onSubmit={handleEnsureBossProfile}>
+                <fieldset disabled={formsDisabled} className="fieldset">
+                  <label htmlFor="boss-name">Display name</label>
+                  <input
+                    id="boss-name"
+                    value={bossName}
+                    onChange={(e) => setBossName(e.target.value)}
+                    required
+                  />
+                  <button className="button" type="submit">
+                    Save Boss Profile
+                  </button>
+                </fieldset>
+              </form>
+            </section>
 
-                <label htmlFor="player-passcode">Passcode (share privately)</label>
-                <input
-                  id="player-passcode"
-                  value={playerPasscode}
-                  onChange={(e) => setPlayerPasscode(e.target.value)}
-                  placeholder="auto-generated or custom"
-                  required
-                />
+            <section className="card">
+              <div className="card-header">
+                <h2>Add Player</h2>
+                <span className="muted">Credentials</span>
+              </div>
+              <form onSubmit={handleCreatePlayer}>
+                <fieldset disabled={formsDisabled} className="fieldset">
+                  <label htmlFor="player-codename">Codename</label>
+                  <input
+                    id="player-codename"
+                    value={playerCodename}
+                    onChange={(e) => setPlayerCodename(e.target.value)}
+                    placeholder="e.g. midnight-spark"
+                    required
+                  />
 
-                <button className="button" type="submit">
-                  Create Player
-                </button>
-              </fieldset>
-            </form>
-          </section>
+                  <label htmlFor="player-passcode">Passcode (share privately)</label>
+                  <input
+                    id="player-passcode"
+                    value={playerPasscode}
+                    onChange={(e) => setPlayerPasscode(e.target.value)}
+                    placeholder="auto-generated or custom"
+                    required
+                  />
 
-          <section className="card">
-            <div className="card-header">
-              <h2>Add Arena</h2>
-              <span className="muted">Deploy</span>
-            </div>
-            <form onSubmit={handleCreateArena}>
-              <fieldset disabled={formsDisabled} className="fieldset">
-                <label htmlFor="arena-name">Name</label>
-                <input
-                  id="arena-name"
-                  value={arenaName}
-                  onChange={(e) => setArenaName(e.target.value)}
-                  placeholder="e.g. Forge Alpha"
-                  required
-                />
+                  <button className="button" type="submit">
+                    Create Player
+                  </button>
+                </fieldset>
+              </form>
+            </section>
 
-                <label htmlFor="arena-description">Description</label>
-                <input
-                  id="arena-description"
-                  value={arenaDescription}
-                  onChange={(e) => setArenaDescription(e.target.value)}
-                  placeholder="Short mission brief"
-                />
+            <section className="card">
+              <div className="card-header">
+                <h2>Add Arena</h2>
+                <span className="muted">Deploy</span>
+              </div>
+              <form onSubmit={handleCreateArena}>
+                <fieldset disabled={formsDisabled} className="fieldset">
+                  <label htmlFor="arena-name">Name</label>
+                  <input
+                    id="arena-name"
+                    value={arenaName}
+                    onChange={(e) => setArenaName(e.target.value)}
+                    placeholder="e.g. Forge Alpha"
+                    required
+                  />
 
-                <label htmlFor="arena-capacity">Capacity (optional)</label>
-                <input
-                  id="arena-capacity"
-                  type="number"
-                  value={arenaCapacity}
-                  onChange={(e) => setArenaCapacity(e.target.value)}
-                  min="0"
-                  placeholder="Max agents"
-                />
+                  <label htmlFor="arena-description">Description</label>
+                  <input
+                    id="arena-description"
+                    value={arenaDescription}
+                    onChange={(e) => setArenaDescription(e.target.value)}
+                    placeholder="Short mission brief"
+                  />
 
-                <button className="button" type="submit">
-                  Create Arena
-                </button>
-              </fieldset>
-            </form>
-          </section>
-        </div>
+                  <label htmlFor="arena-capacity">Capacity (optional)</label>
+                  <input
+                    id="arena-capacity"
+                    type="number"
+                    value={arenaCapacity}
+                    onChange={(e) => setArenaCapacity(e.target.value)}
+                    min="0"
+                    placeholder="Max agents"
+                  />
 
-        <div className="grid" style={{ gap: 24 }}>
-          <section className="card">
-            <div className="card-header">
-              <h2>Current Players</h2>
-              <span className="muted">Roster</span>
-            </div>
-            {playersLoading ? (
-              <ul className="list">
-                {Array.from({ length: 4 }).map((_, index) => (
-                  <li key={index}>
-                    <span className="skel" style={{ width: 160 }} />
-                    <span className="skel" style={{ width: 90 }} />
-                  </li>
-                ))}
-              </ul>
-            ) : players.length === 0 ? (
-              <p className="empty">No players created yet.</p>
-            ) : (
-              <ul className="list">
-                {players.map((p) => (
-                  <li key={p.id}>
-                    <div className="meta-grid">
-                      <strong>{p.codename}</strong>
-                      {p.lastActiveAt ? (
-                        <span className="muted">Last active {new Date(p.lastActiveAt).toLocaleString()}</span>
-                      ) : (
-                        <span className="muted">Created {new Date(p.createdAt).toLocaleString()}</span>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+                  <button className="button" type="submit">
+                    Create Arena
+                  </button>
+                </fieldset>
+              </form>
+            </section>
+          </div>
 
-          <section className="card">
-            <div className="card-header">
-              <h2>Current Arenas</h2>
-              <span className="muted">Live grid</span>
-            </div>
-            {arenasError ? (
-              <div className="error">Failed to load arenas.</div>
-            ) : arenasLoading ? (
-              <ul className="list">
-                {Array.from({ length: 3 }).map((_, index) => (
-                  <li key={index}>
-                    <span className="skel" style={{ width: 140 }} />
-                    <span className="skel" style={{ width: 110 }} />
-                  </li>
-                ))}
-              </ul>
-            ) : arenas.length === 0 ? (
-              <p className="empty">No arenas created yet.</p>
-            ) : (
-              <ul className="list">
-                {arenas.map((arena) => (
-                  <li key={arena.id}>
-                    <div className="meta-grid">
-                      <strong>{arena.name}</strong>
-                      {arena.description ? <span className="muted">{arena.description}</span> : null}
-                    </div>
-                    <div className="meta">
-                      {arena.capacity ? (
-                        <span className="muted">Capacity {arena.capacity}</span>
-                      ) : (
-                        <span className="muted">Capacity ∞</span>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          <div className="grid" style={{ gap: 24 }}>
+            <section className="card">
+              <div className="card-header">
+                <h2>Current Players</h2>
+                <span className="muted">Roster</span>
+              </div>
+              {playersLoading ? (
+                <ul className="list">
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <li key={index}>
+                      <span className="skel" style={{ width: 160 }} />
+                      <span className="skel" style={{ width: 90 }} />
+                    </li>
+                  ))}
+                </ul>
+              ) : players.length === 0 ? (
+                <p className="empty">No players created yet.</p>
+              ) : (
+                <ul className="list">
+                  {players.map((p) => (
+                    <li key={p.id}>
+                      <div className="meta-grid">
+                        <strong>{p.codename}</strong>
+                        {p.lastActiveAt ? (
+                          <span className="muted">Last active {new Date(p.lastActiveAt).toLocaleString()}</span>
+                        ) : (
+                          <span className="muted">Created {new Date(p.createdAt).toLocaleString()}</span>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section className="card">
+              <div className="card-header">
+                <h2>Current Arenas</h2>
+                <span className="muted">Live grid</span>
+              </div>
+              {arenasError ? (
+                <div className="error">Failed to load arenas.</div>
+              ) : arenasLoading ? (
+                <ul className="list">
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <li key={index}>
+                      <span className="skel" style={{ width: 140 }} />
+                      <span className="skel" style={{ width: 110 }} />
+                    </li>
+                  ))}
+                </ul>
+              ) : arenas.length === 0 ? (
+                <p className="empty">No arenas created yet.</p>
+              ) : (
+                <ul className="list">
+                  {arenas.map((arena) => (
+                    <li key={arena.id}>
+                      <div className="meta-grid">
+                        <strong>{arena.name}</strong>
+                        {arena.description ? <span className="muted">{arena.description}</span> : null}
+                      </div>
+                      <div className="meta">
+                        {arena.capacity ? (
+                          <span className="muted">Capacity {arena.capacity}</span>
+                        ) : (
+                          <span className="muted">Capacity ∞</span>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          </div>
         </div>
       </div>
-      </div>
-      <DebugDock />
-    </>
+    <DebugDock />
+  </>
   );
 };
 
