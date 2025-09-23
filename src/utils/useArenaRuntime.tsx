@@ -2,13 +2,40 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ensureAnonAuth } from "../auth/ensureAnonAuth";
 import { startPresence } from "../arena/presence";
 import { ensureArenaFixed } from "../lib/arenaRepo";
-import { watchArenaPresence, type LivePresence } from "../firebase";
+import {
+  auth,
+  claimArenaWriter,
+  renewArenaWriterLease,
+  watchArenaPresence,
+  watchArenaState,
+  type LivePresence,
+} from "../firebase";
 import { writeArenaInput } from "../net/ActionBus";
 import { startHostLoop } from "../game/net/hostLoop";
 import { pullAllInputs, writeStateSnapshot, stepSimFrame, resetArenaSim } from "../game/net/plumbing";
 
 const WAIT_DEBOUNCE_MS = 2000;
 const WRITER_ELECTION_DEBOUNCE_MS = 300;
+const WRITER_LEASE_REFRESH_MS = 250;
+const WRITER_LEASE_GRACE_MS = 800;
+
+const toMillis = (value: unknown): number => {
+  if (!value) return 0;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof value === "object" && typeof (value as { toMillis?: () => number }).toMillis === "function") {
+    try {
+      return (value as { toMillis: () => number }).toMillis();
+    } catch (error) {
+      console.warn("[WRITER] lease toMillis failed", error);
+      return 0;
+    }
+  }
+  return 0;
+};
 
 export function useArenaRuntime(
   arenaId?: string,
@@ -22,11 +49,26 @@ export function useArenaRuntime(
   const [nextRetryAt, setNextRetryAt] = useState<number | undefined>(undefined);
   const [lastBootErrorAt, setLastBootErrorAt] = useState<number | null>(null);
   const [probeWarning, setProbeWarning] = useState(false);
+  const [writerMeta, setWriterMeta] = useState<{ writerUid: string | null; writerLeaseUpdatedAt?: number }>({
+    writerUid: null,
+    writerLeaseUpdatedAt: undefined,
+  });
 
   const offRef = useRef<() => void>();
   const stopPresenceRef = useRef<() => Promise<void>>();
   const stopWriterRef = useRef<() => void>();
   const writerDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const writerLeaseIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const writerClaimRef = useRef<Promise<boolean> | null>(null);
+  const writerClaimAttemptRef = useRef<number>(0);
+
+  const clearWriterLeaseInterval = () => {
+    if (writerLeaseIntervalRef.current) {
+      clearInterval(writerLeaseIntervalRef.current);
+      writerLeaseIntervalRef.current = null;
+    }
+    writerClaimAttemptRef.current = 0;
+  };
 
   // Boot with retry: auth → start presence (first) → try seeding arena (non-fatal)
   useEffect(() => {
@@ -57,6 +99,7 @@ export function useArenaRuntime(
         stopWriterRef.current();
         stopWriterRef.current = undefined;
       }
+      clearWriterLeaseInterval();
     };
 
     const boot = async () => {
@@ -169,17 +212,41 @@ export function useArenaRuntime(
     };
   }, [arenaId]);
 
+  useEffect(() => {
+    if (!arenaId) {
+      setWriterMeta({ writerUid: null, writerLeaseUpdatedAt: undefined });
+      return () => {};
+    }
+
+    const unsubscribe = watchArenaState(arenaId, (state) => {
+      const record = (state ?? {}) as Record<string, unknown>;
+      const writerUid = typeof record.writerUid === "string" ? record.writerUid : null;
+      const leaseMs = toMillis(record.writerLeaseUpdatedAt);
+      setWriterMeta({
+        writerUid,
+        writerLeaseUpdatedAt: leaseMs > 0 ? leaseMs : undefined,
+      });
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [arenaId]);
+
   // Debounced roster stability (UI only)
   useEffect(() => {
     const t = setTimeout(() => {
       const ok = live.length >= 2;
-      console.info("[PRESENCE] roster stable", { count: live.length, ids: live.map((p) => p.id) });
+      console.info("[PRESENCE] roster stable", {
+        count: live.length,
+        ids: live.map((p) => p.uid || p.id),
+      });
       setStable(ok);
     }, WAIT_DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [live]);
 
-  // Writer election (lexicographically smallest presenceId)
+  // Writer election (lexicographically smallest auth uid)
   useEffect(() => {
     const clearTimer = () => {
       if (writerDebounceRef.current) {
@@ -193,37 +260,95 @@ export function useArenaRuntime(
     if (!arenaId || !presenceId) {
       stopWriterRef.current?.();
       stopWriterRef.current = undefined;
+      clearWriterLeaseInterval();
       return clearTimer;
     }
 
-    const rosterIds = live.map((p) => p.id);
+    const localUid = auth.currentUser?.uid ?? null;
+    if (!localUid) {
+      stopWriterRef.current?.();
+      stopWriterRef.current = undefined;
+      clearWriterLeaseInterval();
+      return clearTimer;
+    }
+
+    const rosterUids = live
+      .map((p) => p.uid || p.authUid || p.id)
+      .filter((value): value is string => typeof value === "string" && value.length > 0);
 
     writerDebounceRef.current = setTimeout(() => {
-      const leader = [...rosterIds].sort()[0];
-      const amWriter = Boolean(leader && leader === presenceId);
+      const electedUid = rosterUids.length ? [...rosterUids].sort()[0] : undefined;
+      const leaseMs = writerMeta.writerLeaseUpdatedAt ?? 0;
+      const leaseAge = leaseMs > 0 ? Date.now() - leaseMs : Number.POSITIVE_INFINITY;
+      const leaseFresh = writerMeta.writerUid === localUid && leaseAge <= WRITER_LEASE_GRACE_MS;
 
-      if (!amWriter) {
+      console.info("[WRITER] election", { arenaId, electedUid, localUid, leaseAge });
+
+      if (!electedUid || electedUid !== localUid) {
         if (stopWriterRef.current) {
           stopWriterRef.current();
           stopWriterRef.current = undefined;
         }
+        clearWriterLeaseInterval();
         return;
       }
 
-      stopWriterRef.current?.();
-      stopWriterRef.current = startHostLoop({
-        arenaId,
-        isWriter: () => true,
-        getLivePresence: () => live,
-        pullInputs: () => pullAllInputs(arenaId),
-        stepSim: (dt, inputs) => stepSimFrame(arenaId, dt, inputs, live),
-        writeState: () => writeStateSnapshot(arenaId),
-      });
-      console.info("[WRITER] elected", { presenceId, arenaId });
+      if (!leaseFresh) {
+        const now = Date.now();
+        if (
+          !writerClaimRef.current &&
+          leaseAge > WRITER_LEASE_GRACE_MS &&
+          now - writerClaimAttemptRef.current >= WRITER_ELECTION_DEBOUNCE_MS
+        ) {
+          writerClaimAttemptRef.current = now;
+          console.info("[WRITER] claim-attempt", { arenaId, electedUid, localUid, leaseAge });
+          writerClaimRef.current = claimArenaWriter(arenaId, localUid)
+            .then((claimed) => {
+              console.info("[WRITER] claim-result", { arenaId, localUid, claimed });
+              return claimed;
+            })
+            .catch((error) => {
+              const message = error instanceof Error ? error.message : String(error);
+              console.error("[WRITER] claim-failed", { arenaId, localUid, message });
+              return false;
+            })
+            .finally(() => {
+              writerClaimRef.current = null;
+            });
+        }
+        if (stopWriterRef.current) {
+          stopWriterRef.current();
+          stopWriterRef.current = undefined;
+        }
+        clearWriterLeaseInterval();
+        return;
+      }
+
+      if (!stopWriterRef.current) {
+        stopWriterRef.current = startHostLoop({
+          arenaId,
+          isWriter: () => true,
+          getLivePresence: () => live,
+          pullInputs: () => pullAllInputs(arenaId),
+          stepSim: (dt, inputs) => stepSimFrame(arenaId, dt, inputs, live),
+          writeState: () => writeStateSnapshot(arenaId),
+        });
+      }
+
+      if (!writerLeaseIntervalRef.current) {
+        writerLeaseIntervalRef.current = setInterval(() => {
+          void renewArenaWriterLease(arenaId, localUid).catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error("[WRITER] lease-renew-failed", { arenaId, localUid, message });
+          });
+        }, WRITER_LEASE_REFRESH_MS);
+      }
+
+      console.info("[WRITER] elected", { arenaId, electedUid, localUid });
     }, WRITER_ELECTION_DEBOUNCE_MS);
 
     return clearTimer;
-  }, [arenaId, presenceId, live]);
+  }, [arenaId, presenceId, live, writerMeta]);
 
   // Input enqueue bound to current presence
   const enqueueInput = useMemo(() => {
@@ -240,6 +365,7 @@ export function useArenaRuntime(
     if (!arenaId) return () => {};
     return () => {
       stopWriterRef.current?.();
+      clearWriterLeaseInterval();
       if (stopPresenceRef.current) void stopPresenceRef.current();
       resetArenaSim(arenaId);
     };

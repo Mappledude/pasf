@@ -755,6 +755,7 @@ export const watchArenaSeats = (
 export type LivePresence = {
   id: string;
   authUid: string;
+  uid: string;
   playerId?: string;
   lastSeen: number;
   displayName: string;
@@ -764,6 +765,7 @@ export type LivePresence = {
 type PresenceEntry = {
   id: string;
   authUid: string;
+  uid: string;
   playerId?: string;
   presenceId: string;
   lastSeenMs: number;
@@ -809,23 +811,25 @@ export const watchArenaPresence = (arenaId: string, onChange: (live: LivePresenc
       const nowMs = Date.now();
       const docs = snap.docs.slice(0, 50); // safety cap; adjust if you expect >50 players
       const entries: PresenceEntry[] = docs.map((docSnap: QueryDocumentSnapshot): PresenceEntry => {
-        const data = docSnap.data() as Record<string, unknown>;
-        const authUid = typeof data.authUid === "string" ? data.authUid : "";
-        const playerId = typeof data.playerId === "string" ? data.playerId : undefined;
-        const presenceId = typeof data.presenceId === "string" && data.presenceId ? data.presenceId : docSnap.id;
-        const lastSeenMs = toMillisSafe(data.lastSeen ?? data.lastSeenSrv);
-        const lastSeenSrvMs = toMillisSafe(data.lastSeenSrv);
-        const displayNameRaw = typeof data.displayName === "string" ? data.displayName.trim() : "";
-        const displayName = displayNameRaw || resolveDisplayName(undefined, undefined, authUid);
+      const data = docSnap.data() as Record<string, unknown>;
+      const authUid = typeof data.authUid === "string" ? data.authUid : "";
+      const uid = typeof data.uid === "string" ? data.uid : authUid;
+      const playerId = typeof data.playerId === "string" ? data.playerId : undefined;
+      const presenceId = typeof data.presenceId === "string" && data.presenceId ? data.presenceId : docSnap.id;
+      const lastSeenMs = toMillisSafe(data.lastSeen ?? data.lastSeenSrv);
+      const lastSeenSrvMs = toMillisSafe(data.lastSeenSrv);
+      const displayNameRaw = typeof data.displayName === "string" ? data.displayName.trim() : "";
+      const displayName = displayNameRaw || resolveDisplayName(undefined, undefined, authUid);
 
-        return {
-          id: docSnap.id,
-          authUid,
-          playerId,
-          presenceId,
-          lastSeenMs,
-          lastSeenSrvMs,
-          displayName,
+      return {
+        id: docSnap.id,
+        authUid,
+        uid,
+        playerId,
+        presenceId,
+        lastSeenMs,
+        lastSeenSrvMs,
+        displayName,
         };
       });
 
@@ -841,7 +845,7 @@ export const watchArenaPresence = (arenaId: string, onChange: (live: LivePresenc
 
       console.info(
         "[PRESENCE] live",
-        live.map((p: LivePresence) => ({ id: p.id, dn: p.displayName })),
+        live.map((p: LivePresence) => ({ id: p.id, uid: p.uid, dn: p.displayName })),
       );
       onChange(live);
     },
@@ -1025,6 +1029,7 @@ export async function writeArenaState(arenaId: string, state: ArenaStateWrite): 
       lastWriter: state.lastWriter,
       ts: state.ts,
       entities,
+      writerLeaseUpdatedAt: serverTimestamp(),
       lastUpdate: serverTimestamp(),
     },
     { merge: true },
@@ -1038,10 +1043,61 @@ export async function writeArenaWriter(arenaId: string, writerUid: string | null
     ref,
     {
       writerUid,
+      writerLeaseUpdatedAt: writerUid ? serverTimestamp() : null,
       lastUpdate: serverTimestamp(),
     },
     { merge: true },
   );
+}
+
+const WRITER_LEASE_GRACE_MS = 800;
+
+export async function claimArenaWriter(arenaId: string, writerUid: string): Promise<boolean> {
+  await ensureAnonAuth();
+  const ref = arenaStateDoc(arenaId);
+  const now = Date.now();
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.exists() ? snap.data() : {};
+    const currentWriter = typeof data.writerUid === "string" ? data.writerUid : null;
+    const leaseMs = toMillisSafe((data as Record<string, unknown>).writerLeaseUpdatedAt);
+    const leaseAge = leaseMs ? now - leaseMs : Number.POSITIVE_INFINITY;
+    if (currentWriter && currentWriter !== writerUid && leaseAge <= WRITER_LEASE_GRACE_MS) {
+      return false;
+    }
+    tx.set(
+      ref,
+      {
+        writerUid,
+        lastWriter: writerUid,
+        writerLeaseUpdatedAt: serverTimestamp(),
+        lastUpdate: serverTimestamp(),
+      },
+      { merge: true },
+    );
+    return true;
+  });
+}
+
+export async function renewArenaWriterLease(arenaId: string, writerUid: string): Promise<void> {
+  await ensureAnonAuth();
+  const ref = arenaStateDoc(arenaId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.exists() ? snap.data() : {};
+    const currentWriter = typeof data.writerUid === "string" ? data.writerUid : null;
+    if (currentWriter && currentWriter !== writerUid) {
+      return;
+    }
+    tx.set(
+      ref,
+      {
+        writerUid,
+        writerLeaseUpdatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+  });
 }
 
 export async function applyDamage(arenaId: string, targetPlayerId: string, amount: number) {

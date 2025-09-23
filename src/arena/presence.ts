@@ -1,11 +1,8 @@
 import { auth, db } from "../firebase";
-import { doc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
-import { nanoid } from "nanoid";
+import { deleteDoc, doc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 
-const HEARTBEAT_MS = 10000;
+const HEARTBEAT_MS = 5000;
 const MAX_CONSECUTIVE_FAILURES = 3;
-
-const generatePresenceId = () => nanoid(10);
 
 export const startPresence = async (arenaId: string, playerId?: string, profile?: { displayName?: string }) => {
   const uid = auth.currentUser?.uid;
@@ -29,7 +26,7 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
     });
   }
 
-  const presenceId = generatePresenceId();
+  const presenceId = uid;
   const ref = doc(db, "arenas", arenaId, "presence", presenceId);
   const path = ref.path;
 
@@ -37,6 +34,7 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
 
   const createPayload = {
     authUid: uid,
+    uid,
     presenceId,
     playerId: playerId ?? uid,
     displayName,
@@ -44,6 +42,7 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
     lastSeen: serverTimestamp(),
     lastSeenSrv: serverTimestamp(),
     heartbeatMs: HEARTBEAT_MS,
+    arenaId,
   };
 
   console.info("[PRESENCE] write-attempt", {
@@ -84,6 +83,7 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
   };
 
   const beat = async () => {
+    if (stopped) return;
     console.info("[PRESENCE] write-attempt", {
       stage: "beat",
       path,
@@ -120,25 +120,86 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
     }
   };
 
-  timer = setInterval(() => {
-    void beat();
-  }, HEARTBEAT_MS);
+  const startTimer = () => {
+    if (timer || stopped) return;
+    timer = setInterval(() => {
+      void beat();
+    }, HEARTBEAT_MS);
+  };
+
+  const stopTimer = () => {
+    clearTimer();
+  };
+
+  const onVisibilityChange = () => {
+    if (typeof document === "undefined") return;
+    if (document.visibilityState === "hidden") {
+      stopTimer();
+    } else if (!stopped) {
+      void beat();
+      startTimer();
+    }
+  };
+
+  if (typeof document !== "undefined") {
+    if (document.visibilityState !== "hidden") {
+      void beat();
+      startTimer();
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+  } else {
+    startTimer();
+  }
+
+  const detachVisibility = () => {
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    }
+  };
+
+  const deletePresence = async (source: string) => {
+    try {
+      await deleteDoc(ref);
+      console.info("[PRESENCE] delete", { arenaId, presenceId, source });
+    } catch (error: any) {
+      console.error("[PRESENCE] delete-failed", {
+        arenaId,
+        presenceId,
+        source,
+        code: error?.code,
+        message: error?.message,
+      });
+    }
+  };
+
+  const handlePageHide = () => {
+    if (stopped) return;
+    stopTimer();
+    detachVisibility();
+    detachWindowHandlers();
+    void deletePresence("pagehide");
+  };
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("beforeunload", handlePageHide);
+  }
+
+  const detachWindowHandlers = () => {
+    if (typeof window !== "undefined") {
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("beforeunload", handlePageHide);
+    }
+  };
 
   const stop = async () => {
     if (stopped) return;
     stopped = true;
-    clearTimer();
-    try {
-      await updateDoc(ref, {
-        stage: "stop",
-        lastSeen: serverTimestamp(),
-        lastSeenSrv: serverTimestamp(),
-      });
-    } catch (e: any) {
-      console.error("[PRESENCE] stop-failed", { code: e?.code, message: e?.message });
-    }
+    stopTimer();
+    detachVisibility();
+    detachWindowHandlers();
+    await deletePresence("stop");
   };
 
-  window.addEventListener("beforeunload", stop, { once: true });
   return { presenceId, stop };
 };
