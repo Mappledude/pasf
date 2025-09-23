@@ -35,6 +35,20 @@ import {
 import { getFunctions } from "firebase/functions";
 import { dbg } from "./lib/debug";
 
+type EnvRecord = Record<string, unknown> & { DEV?: boolean };
+
+const globalEnv = (globalThis as { __ARENA_TEST_ENV__?: EnvRecord }).__ARENA_TEST_ENV__;
+const fallbackEnv: EnvRecord = {
+  DEV: process.env.NODE_ENV !== "production",
+  VITE_USE_FIREBASE_EMULATORS: process.env.VITE_USE_FIREBASE_EMULATORS,
+  VITE_APPCHECK_PROVIDER: process.env.VITE_APPCHECK_PROVIDER,
+  VITE_APPCHECK_SITE_KEY: process.env.VITE_APPCHECK_SITE_KEY,
+  VITE_DEBUG_FIREBASE: process.env.VITE_DEBUG_FIREBASE,
+  VITE_DEBUG_LOGS: process.env.VITE_DEBUG_LOGS,
+};
+
+const env = ((import.meta as unknown as { env?: EnvRecord }).env ?? globalEnv ?? fallbackEnv) as EnvRecord;
+
 // === CONFIG (stickfightpa) ===
 export const firebaseConfig = {
   apiKey: "AIzaSyAfqKN-zpIpwblhcafgKEneUnAfcTUV0-A",
@@ -51,15 +65,15 @@ console.info("[ARENA] firebase-project", { projectId: getApp().options.projectId
 
 // --- App Check (must execute BEFORE any db/auth/functions usage) ---
 (() => {
-  if (import.meta.env?.DEV && typeof self !== "undefined") {
+  if (env?.DEV && typeof self !== "undefined") {
     // Use true on first run to auto-register a debug token. Replace with a string once registered.
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
     self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
   }
 
-  const providerKind = (import.meta.env?.VITE_APPCHECK_PROVIDER || "v3").toLowerCase();
-  const siteKey = import.meta.env?.VITE_APPCHECK_SITE_KEY;
+  const providerKind = String(env?.VITE_APPCHECK_PROVIDER ?? "v3").toLowerCase();
+  const siteKey = (env?.VITE_APPCHECK_SITE_KEY as string | undefined) ?? undefined;
 
   try {
     if (!siteKey) {
@@ -90,13 +104,13 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const functions = getFunctions(app);
 
-const FIREBASE_DEBUG = import.meta.env?.VITE_DEBUG_FIREBASE === "true" || import.meta.env?.DEV;
+const FIREBASE_DEBUG = env?.VITE_DEBUG_FIREBASE === "true" || env?.DEV;
 
 let loggedProjectId = false;
 
 // === DEV EMULATORS (optional) ===
 export const maybeConnectEmulators = () => {
-  if (import.meta.env?.DEV && import.meta.env?.VITE_USE_FIREBASE_EMULATORS === "true") {
+  if (env?.DEV && env?.VITE_USE_FIREBASE_EMULATORS === "true") {
     try {
       connectAuthEmulator(auth, "http://127.0.0.1:9099");
       connectFirestoreEmulator(db, "127.0.0.1", 8080);
@@ -379,7 +393,7 @@ export const loginWithPasscode = async (passcode: string): Promise<PlayerProfile
 export const listPlayers = async (): Promise<PlayerProfile[]> => {
   await ensureAnonAuth();
   const snapshot = await getDocs(collection(db, "players"));
-  return snapshot.docs.map((docSnap) => {
+  return snapshot.docs.map((docSnap: QueryDocumentSnapshot) => {
     const d = docSnap.data() as any;
     return {
       id: docSnap.id,
@@ -465,7 +479,7 @@ export const ensureArenaDocument = async (arenaId: string): Promise<void> => {
 
 export const listArenas = async (): Promise<Arena[]> => {
   const snapshot = await getDocs(collection(db, "arenas"));
-  return snapshot.docs.map((s) => {
+  return snapshot.docs.map((s: QueryDocumentSnapshot) => {
     const d = s.data() as any;
     return {
       id: s.id,
@@ -646,7 +660,7 @@ export const claimArenaSeat = async (
   const seatRef = seatDoc(arenaId, seatNo);
   const seatsCollection = collection(db, `arenas/${arenaId}/seats`);
   const seatSnapshot = await getDocs(seatsCollection);
-  const seatRefs = seatSnapshot.docs.map((snap) => snap.ref);
+  const seatRefs = seatSnapshot.docs.map((snap: QueryDocumentSnapshot) => snap.ref);
 
   await runTransaction(db, async (tx) => {
     const currentSnap = await tx.get(seatRef);
@@ -718,7 +732,7 @@ export const watchArenaSeats = (
   const seatsRef = collection(db, `arenas/${arenaId}/seats`);
   return onSnapshot(seatsRef, (snapshot) => {
     const seats = snapshot.docs
-      .map((docSnap) => {
+      .map((docSnap: QueryDocumentSnapshot) => {
         const data = docSnap.data() as any;
         const seatNo = Number.parseInt(docSnap.id, 10);
         if (Number.isNaN(seatNo)) return null;
@@ -732,8 +746,8 @@ export const watchArenaSeats = (
           joinedAt: data?.joinedAt?.toDate?.().toISOString?.(),
         } as ArenaSeatAssignment;
       })
-      .filter((seat): seat is ArenaSeatAssignment => !!seat)
-      .sort((a, b) => a.seatNo - b.seatNo);
+      .filter((seat: ArenaSeatAssignment | null): seat is ArenaSeatAssignment => !!seat)
+      .sort((a: ArenaSeatAssignment, b: ArenaSeatAssignment) => a.seatNo - b.seatNo);
     cb(seats);
   });
 };
@@ -764,18 +778,18 @@ export const watchArenaPresence = (arenaId: string, onChange: (live: LivePresenc
     presenceRef,
     async (snap) => {
       const now = Date.now();
-      const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-      const liveRaw = rows.filter((r) => now - Number(r.lastSeen ?? 0) <= 20_000);
+      const rows = snap.docs.map((d: QueryDocumentSnapshot) => ({ id: d.id, ...(d.data() as any) }));
+      const liveRaw = rows.filter((r: any) => now - Number(r.lastSeen ?? 0) <= 20_000);
       const cache = new Map<string, any>();
       await Promise.all(
-        liveRaw.map(async (r) => {
+        liveRaw.map(async (r: any) => {
           if (r.playerId && !cache.has(r.playerId)) {
             const ps = await getDoc(doc(db, "players", r.playerId));
             cache.set(r.playerId, ps.exists() ? ps.data() : null);
           }
         })
       );
-      const live = liveRaw.map((r) => ({
+      const live = liveRaw.map((r: any) => ({
         id: r.id,
         authUid: r.authUid ?? "",
         playerId: r.playerId,
@@ -783,7 +797,7 @@ export const watchArenaPresence = (arenaId: string, onChange: (live: LivePresenc
         displayName: resolveDisplayName(r.profile ?? null, cache.get(r.playerId) ?? null, r.authUid ?? null),
         presenceId: r.id,
       }));
-      console.info("[PRESENCE] live", live.map((p) => ({ id: p.id, dn: p.displayName })));
+      console.info("[PRESENCE] live", live.map((p: LivePresence) => ({ id: p.id, dn: p.displayName })));
       onChange(live);
     },
     (err) => {
@@ -1118,7 +1132,7 @@ export const listLeaderboard = async (): Promise<LeaderboardEntry[]> => {
   const entries = snapshot.docs.map(deserializeLeaderboardEntry);
 
   return Promise.all(
-    entries.map(async (entry) => {
+    entries.map(async (entry: LeaderboardEntry) => {
       if (entry.playerCodename) {
         return entry;
       }
