@@ -8,6 +8,7 @@ import { startHostLoop } from "../game/net/hostLoop";
 import { pullAllInputs, writeStateSnapshot, stepSimFrame, resetArenaSim } from "../game/net/plumbing";
 
 const WAIT_DEBOUNCE_MS = 2000;
+const WRITER_ELECTION_DEBOUNCE_MS = 300;
 
 export function useArenaRuntime(
   arenaId?: string,
@@ -179,33 +180,39 @@ export function useArenaRuntime(
 
   // Writer election (lexicographically smallest presenceId)
   useEffect(() => {
-    if (!arenaId || !presenceId) return;
-
-    const leader = [...live].map((p) => p.id).sort()[0];
-    const amWriter = leader && leader === presenceId;
-
-    if (!amWriter) {
-      if (stopWriterRef.current) {
-        stopWriterRef.current();
+    if (!arenaId || !presenceId) {
+      return () => {
+        stopWriterRef.current?.();
         stopWriterRef.current = undefined;
-      }
-      return;
+      };
     }
 
-    stopWriterRef.current?.();
-    stopWriterRef.current = startHostLoop({
-      arenaId,
-      isWriter: () => true,
-      getLivePresence: () => live,
-      pullInputs: () => pullAllInputs(arenaId),
-      stepSim: (dt, inputs) => stepSimFrame(arenaId, dt, inputs, live),
-      writeState: () => writeStateSnapshot(arenaId),
-    });
-    console.info("[WRITER] elected", { presenceId, arenaId });
+    const timer = setTimeout(() => {
+      const leader = [...live].map((p) => p.id).sort()[0];
+      const amWriter = leader && leader === presenceId;
+
+      if (!amWriter) {
+        if (stopWriterRef.current) {
+          stopWriterRef.current();
+          stopWriterRef.current = undefined;
+        }
+        return;
+      }
+
+      stopWriterRef.current?.();
+      stopWriterRef.current = startHostLoop({
+        arenaId,
+        isWriter: () => true,
+        getLivePresence: () => live,
+        pullInputs: () => pullAllInputs(arenaId),
+        stepSim: (dt, inputs) => stepSimFrame(arenaId, dt, inputs, live),
+        writeState: () => writeStateSnapshot(arenaId),
+      });
+      console.info("[WRITER] elected", { presenceId, arenaId });
+    }, WRITER_ELECTION_DEBOUNCE_MS);
 
     return () => {
-      stopWriterRef.current?.();
-      stopWriterRef.current = undefined;
+      clearTimeout(timer);
     };
   }, [arenaId, presenceId, JSON.stringify(live.map((p) => p.id).sort())]);
 
