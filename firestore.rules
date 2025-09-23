@@ -2,6 +2,19 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{db}/documents {
     function authed() { return request.auth != null; }
+    function isOwnerCreate() {
+      // On CREATE, there is no resource.data; must use request.resource.data
+      return authed() && request.resource.data.authUid == request.auth.uid;
+    }
+    function isOwnerUpdate() {
+      // On UPDATE/DELETE, resource.data exists. Keep authUid immutable.
+      return authed()
+        && resource.data.authUid == request.auth.uid
+        && (
+          !('authUid' in request.resource.data)
+          || request.resource.data.authUid == resource.data.authUid
+        );
+    }
 
     match /arenas/{arenaId} {
       allow read: if true;
@@ -15,25 +28,23 @@ service cloud.firestore {
 
       // Session-scoped presence (per-tab)
       match /presence/{presenceId} {
+        // On CREATE, resource does not exist; use request.resource.data.*
+        // On UPDATE, resource.data exists; keep authUid immutable.
         allow read: if true;
-
-        // Create: allow any authed client to create its presence doc when it stamps its UID
-        allow create: if authed()
-          && request.resource.data.authUid == request.auth.uid;
-
-        // Update/Delete: only the owner of the existing doc may change/remove it;
-        // prevent authUid from being hijacked.
-        allow update, delete: if authed()
-          && resource.data.authUid == request.auth.uid
-          && (!('authUid' in request.resource.data)
-              || request.resource.data.authUid == resource.data.authUid);
+        allow create: if isOwnerCreate();
+        allow update, delete: if isOwnerUpdate();
       }
 
       // Inputs fan-in: inputs/{presenceId}/events/{eventId}
-      match /inputs/{presenceId}/events/{eventId} {
+      match /inputs/{presenceId} {
         allow read: if true;
-        allow create: if authed()
-          && request.resource.data.authUid == request.auth.uid;
+
+        match /events/{eventId} {
+          allow read: if true;
+          allow create: if authed()
+            && request.resource.data.authUid == request.auth.uid
+            && request.resource.data.presenceId == presenceId;
+        }
       }
     }
 
