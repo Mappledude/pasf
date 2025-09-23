@@ -10,7 +10,11 @@
   },
   "include": [
     "src/types.d.ts",
+    "src/firebase.ts",
+    "src/lib/**/*.ts",
     "src/sim/**/*.ts",
-    "vendor/vitest/index.d.ts"
+    "vendor/vitest/index.d.ts",
+    "tests/**/*.ts",
+    "tests/types/**/*.d.ts"
   ]
 }
