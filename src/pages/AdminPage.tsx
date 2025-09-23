@@ -8,7 +8,7 @@ import {
   normalizePasscode,
   db,
 } from "../firebase";
-import { collection, deleteDoc, doc, getDocs } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, getDocs } from "firebase/firestore";
 import type { PlayerProfile } from "../types/models";
 import { useArenas } from "../utils/useArenas";
 import { useAuth } from "../context/AuthContext";
@@ -19,6 +19,19 @@ const extractErrorMessage = (error: unknown) => {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === "string" && error) return error;
   return "Unknown error";
+};
+
+const extractFirestoreErrorDetails = (
+  error: unknown,
+): { message: string; code?: string } => {
+  const message = extractErrorMessage(error);
+  if (error && typeof error === "object" && "code" in (error as { code?: unknown })) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string" && code) {
+      return { message, code };
+    }
+  }
+  return { message };
 };
 
 const AdminPage = () => {
@@ -184,24 +197,47 @@ const AdminPage = () => {
     try {
       await ensureAnonAuth();
       const arenaRef = doc(db, "arenas", arenaId);
-      const [stateSnapshot, presenceSnapshot] = await Promise.all([
-        getDocs(collection(arenaRef, "state")),
-        getDocs(collection(arenaRef, "presence")),
-      ]);
-      await Promise.all([
-        ...stateSnapshot.docs.map((snap) => deleteDoc(snap.ref)),
-        ...presenceSnapshot.docs.map((snap) => deleteDoc(snap.ref)),
-      ]);
+      const stateCurrentRef = doc(db, "arenas", arenaId, "state", "current");
+
+      let stateDeletedCount = 0;
+      const stateCurrentSnapshot = await getDoc(stateCurrentRef);
+      if (stateCurrentSnapshot.exists()) {
+        await deleteDoc(stateCurrentRef);
+        stateDeletedCount += 1;
+      }
+
+      const presenceSnapshot = await getDocs(collection(arenaRef, "presence"));
+      const presenceDeletedCount = presenceSnapshot.size;
+      if (presenceDeletedCount > 0) {
+        await Promise.all(presenceSnapshot.docs.map((snap) => deleteDoc(snap.ref)));
+      }
+
+      const remainingStateSnapshot = await getDocs(collection(arenaRef, "state"));
+      const remainingStateDocs = remainingStateSnapshot.docs.filter((snap) => snap.id !== "current");
+      if (remainingStateDocs.length > 0) {
+        await Promise.all(remainingStateDocs.map((snap) => deleteDoc(snap.ref)));
+        stateDeletedCount += remainingStateDocs.length;
+      }
+
       await deleteDoc(arenaRef);
-      appendLog(`Arena deleted: ${arenaId}`, "info", { action: "deleteArena", arenaId });
-      setStatus({ message: `Arena ${arenaId} deleted.`, tone: "info" });
-    } catch (err) {
-      const message = extractErrorMessage(err);
-      appendLog(`Failed to delete arena ${arenaId}: ${message}`, "error", {
+      const summary =
+        `Arena deleted: ${arenaId} (state removed: ${stateDeletedCount}, presence removed: ${presenceDeletedCount})`;
+      appendLog(summary, "info", {
         action: "deleteArena",
         arenaId,
+        stateDeletedCount,
+        presenceDeletedCount,
       });
-      setStatus({ message: `Failed to delete arena: ${message}`, tone: "error" });
+      setStatus({ message: summary, tone: "info" });
+    } catch (err) {
+      const { message, code } = extractFirestoreErrorDetails(err);
+      const errorSummary = `Failed to delete arena ${arenaId}${code ? ` (code: ${code})` : ""}: ${message}`;
+      appendLog(errorSummary, "error", {
+        action: "deleteArena",
+        arenaId,
+        ...(code ? { code } : {}),
+      });
+      setStatus({ message: errorSummary, tone: "error" });
     }
   };
 
