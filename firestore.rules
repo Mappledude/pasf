@@ -19,6 +19,7 @@ service cloud.firestore {
     match /arenas/{arenaId} {
       allow read: if true;
       allow create, update: if authed(); // arena metadata
+      allow delete: if request.auth != null && request.auth.token.admin == true;
 
       // Host-authoritative state (writer elected in app)
       match /state/{docId} {
