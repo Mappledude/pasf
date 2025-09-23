@@ -1,4 +1,5 @@
 import React, { FormEvent, useEffect, useMemo, useState } from "react";
+import { FirebaseError } from "firebase/app";
 import { ensureAnonAuth } from "../auth/ensureAnonAuth";
 import {
   createArena,
@@ -19,6 +20,13 @@ const extractErrorMessage = (error: unknown) => {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === "string" && error) return error;
   return "Unknown error";
+};
+
+const extractFirebaseErrorDetails = (error: unknown) => {
+  if (error instanceof FirebaseError) {
+    return { code: error.code, message: error.message || "Unknown error" };
+  }
+  return { code: null, message: extractErrorMessage(error) };
 };
 
 const AdminPage = () => {
@@ -105,9 +113,13 @@ const AdminPage = () => {
       setStatus({ message: "Boss profile updated.", tone: "info" });
       appendLog(`Boss profile updated: ${bossName}`, "info", { action: "ensureBossProfile" });
     } catch (err) {
-      const message = extractErrorMessage(err);
-      appendLog(`Failed to update boss profile: ${message}`, "error", { action: "ensureBossProfile" });
-      setStatus({ message: `Failed to update boss profile: ${message}`, tone: "error" });
+      const { code, message } = extractFirebaseErrorDetails(err);
+      const detail = code ? `${code}: ${message}` : message;
+      appendLog(`Failed to update boss profile: ${detail}`, "error", {
+        action: "ensureBossProfile",
+        ...(code ? { code } : {}),
+      });
+      setStatus({ message: `Failed to update boss profile: ${detail}`, tone: "error" });
     }
   };
 
@@ -126,9 +138,13 @@ const AdminPage = () => {
       appendLog(`Player created: ${playerCodename}`, "info", { action: "createPlayer" });
       await fetchPlayers();
     } catch (err) {
-      const message = extractErrorMessage(err);
-      appendLog(`Failed to create player: ${message}`, "error", { action: "createPlayer" });
-      setStatus({ message: `Failed to create player: ${message}`, tone: "error" });
+      const { code, message } = extractFirebaseErrorDetails(err);
+      const detail = code ? `${code}: ${message}` : message;
+      appendLog(`Failed to create player: ${detail}`, "error", {
+        action: "createPlayer",
+        ...(code ? { code } : {}),
+      });
+      setStatus({ message: `Failed to create player: ${detail}`, tone: "error" });
     }
   };
 
@@ -149,9 +165,13 @@ const AdminPage = () => {
       // useArenas() will update list in real-time
       appendLog(`Arena created: ${arenaName}`, "info", { action: "createArena" });
     } catch (err) {
-      const message = extractErrorMessage(err);
-      appendLog(`Failed to create arena: ${message}`, "error", { action: "createArena" });
-      setStatus({ message: `Failed to create arena: ${message}`, tone: "error" });
+      const { code, message } = extractFirebaseErrorDetails(err);
+      const detail = code ? `${code}: ${message}` : message;
+      appendLog(`Failed to create arena: ${detail}`, "error", {
+        action: "createArena",
+        ...(code ? { code } : {}),
+      });
+      setStatus({ message: `Failed to create arena: ${detail}`, tone: "error" });
     }
   };
 
@@ -167,12 +187,14 @@ const AdminPage = () => {
       setStatus({ message: `Player ${playerId} deleted.`, tone: "info" });
       await fetchPlayers();
     } catch (err) {
-      const message = extractErrorMessage(err);
-      appendLog(`Failed to delete player ${playerId}: ${message}`, "error", {
+      const { code, message } = extractFirebaseErrorDetails(err);
+      const detail = code ? `${code}: ${message}` : message;
+      appendLog(`Failed to delete player ${playerId}: ${detail}`, "error", {
         action: "deletePlayer",
         playerId,
+        ...(code ? { code } : {}),
       });
-      setStatus({ message: `Failed to delete player: ${message}`, tone: "error" });
+      setStatus({ message: `Failed to delete player: ${detail}`, tone: "error" });
     }
   };
 
@@ -196,12 +218,14 @@ const AdminPage = () => {
       appendLog(`Arena deleted: ${arenaId}`, "info", { action: "deleteArena", arenaId });
       setStatus({ message: `Arena ${arenaId} deleted.`, tone: "info" });
     } catch (err) {
-      const message = extractErrorMessage(err);
-      appendLog(`Failed to delete arena ${arenaId}: ${message}`, "error", {
+      const { code, message } = extractFirebaseErrorDetails(err);
+      const detail = code ? `${code}: ${message}` : message;
+      appendLog(`Failed to delete arena ${arenaId}: ${detail}`, "error", {
         action: "deleteArena",
         arenaId,
+        ...(code ? { code } : {}),
       });
-      setStatus({ message: `Failed to delete arena: ${message}`, tone: "error" });
+      setStatus({ message: `Failed to delete arena: ${detail}`, tone: "error" });
     }
   };
 
