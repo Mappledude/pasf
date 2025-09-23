@@ -7,22 +7,27 @@ export const ensureArenaFixed = async (arenaId: string, database: Firestore = db
   const aSnap = await getDoc(aRef);
   let createdArena = false;
   if (!aSnap.exists()) {
-    await setDoc(aRef, { id: arenaId, title: arenaId, createdAt: Date.now() }, { merge: true });
+    await setDoc(
+      aRef,
+      {
+        name: arenaId,
+        createdAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
     createdArena = true;
   }
-  await setDoc(
-    aRef,
-    {
-      seeded: true,
-      touchedAt: serverTimestamp(),
-    },
-    { merge: true },
-  );
   const sSnap = await getDoc(sRef);
   let createdState = false;
   if (!sSnap.exists()) {
-    // seed minimal state
-    await setDoc(sRef, { tick: 0, ents: {}, createdAt: Date.now() }, { merge: true });
+    await setDoc(
+      sRef,
+      {
+        createdAt: serverTimestamp(),
+        writerUid: null,
+      },
+      { merge: true },
+    );
     createdState = true;
   }
 
