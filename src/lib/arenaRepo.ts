@@ -1,5 +1,5 @@
 import { auth, db } from "../firebase";
-import { doc, getDoc, serverTimestamp, setDoc, type Firestore } from "firebase/firestore";
+import { collection, doc, getDoc, serverTimestamp, setDoc, type Firestore } from "firebase/firestore";
 
 export const ensureArenaFixed = async (arenaId: string, database: Firestore = db) => {
   const aRef = doc(database, "arenas", arenaId);
@@ -10,6 +10,14 @@ export const ensureArenaFixed = async (arenaId: string, database: Firestore = db
     await setDoc(aRef, { id: arenaId, title: arenaId, createdAt: Date.now() }, { merge: true });
     createdArena = true;
   }
+  await setDoc(
+    aRef,
+    {
+      seeded: true,
+      touchedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
   const sSnap = await getDoc(sRef);
   let createdState = false;
   if (!sSnap.exists()) {
@@ -18,16 +26,25 @@ export const ensureArenaFixed = async (arenaId: string, database: Firestore = db
     createdState = true;
   }
 
+  let probeWarning = false;
   try {
+    const probeRef = doc(collection(aRef, "state"), "bootstrap-probe");
     await setDoc(
-      doc(database, "arenas", arenaId, "debug", "rules-probe"),
-      { at: serverTimestamp(), who: auth.currentUser?.uid ?? "unknown" },
+      probeRef,
+      { at: serverTimestamp(), ok: true, who: auth.currentUser?.uid ?? "unknown" },
       { merge: true },
     );
     console.info("[ARENA] rules-probe ok", { arenaId });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error("[ARENA] rules-probe failed", { arenaId, message });
+  } catch (error: any) {
+    const code = error?.code ?? error?.name;
+    const message = String(error?.message ?? error);
+    if (code === "permission-denied") {
+      console.warn("[ARENA] rules-probe non-fatal", { arenaId, code, message });
+      probeWarning = true;
+    } else {
+      console.error("[ARENA] rules-probe failed", { arenaId, code, message });
+      throw error;
+    }
   }
-  return { aRef, sRef, createdArena, createdState };
+  return { aRef, sRef, createdArena, createdState, probeWarning };
 };

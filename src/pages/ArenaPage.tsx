@@ -26,7 +26,8 @@ export default function ArenaPage() {
   const { user, player } = useAuth();
 
   // Runtime hook provides presence + inputs (and any boot error upstream)
-  const { presenceId, live, stable, enqueueInput, bootError, lastBootErrorAt } = useArenaRuntime(arenaId);
+  const { presenceId, live, stable, enqueueInput, bootError, probeWarning } =
+    useArenaRuntime(arenaId);
 
   // Phaser mounts regardless of Firestore success/failure
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -117,17 +118,17 @@ export default function ArenaPage() {
   // Non-blocking overlay to surface boot/runtime status
   const overlayState = useMemo(() => {
     if (gameBootError) return { tone: "error" as const, message: `Renderer offline: ${gameBootError}` };
-    if (bootError) return { tone: "error" as const, message: `Arena bootstrap failed: ${bootError}` };
     if (!sceneBooted) return { tone: "info" as const, message: "Booting arena renderer…" };
-    if (!presenceId) return { tone: "info" as const, message: "Linking presence channel…" };
+    if (!presenceId) {
+      if (bootError) {
+        return { tone: "error" as const, message: `Arena bootstrap failed: ${bootError}` };
+      }
+      return { tone: "info" as const, message: "Linking presence channel…" };
+    }
     return null;
   }, [bootError, gameBootError, presenceId, sceneBooted]);
 
-  const permDenied = (bootError ?? "").toLowerCase().includes("permission");
-  const showPermBanner =
-    permDenied &&
-    !presenceId &&
-    (!lastBootErrorAt || Date.now() - lastBootErrorAt < 20000);
+  const showProbeBanner = probeWarning;
 
   return (
     <>
@@ -145,7 +146,7 @@ export default function ArenaPage() {
 
       <section className="card" style={{ marginTop: 24 }}>
         <h2 style={{ marginBottom: 12 }}>Arena Feed</h2>
-        {showPermBanner && (
+        {showProbeBanner && (
           <div
             role="status"
             className="my-3"
@@ -159,7 +160,7 @@ export default function ArenaPage() {
               background: "rgba(15,17,21,0.6)",
             }}
           >
-            Arena bootstrap failed (permissions). Gameplay may be local-only until rules/App Check are enforced.
+            Arena rules probe hit a protected path (non-fatal). Presence continues, but server seeding may be limited.
           </div>
         )}
         <div
@@ -174,7 +175,7 @@ export default function ArenaPage() {
           }}
         >
           <div ref={containerRef} style={{ width: ARENA_WIDTH, height: ARENA_HEIGHT, margin: "0 auto" }} />
-          {!showPermBanner && overlayState ? (
+          {overlayState ? (
             <div
               style={{
                 position: "absolute",
