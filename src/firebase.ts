@@ -802,8 +802,9 @@ export const resolveDisplayName = (
 
 export const watchArenaPresence = (arenaId: string, onChange: (live: LivePresence[]) => void) => {
   const presenceRef = collection(doc(db, "arenas", arenaId), "presence");
+  const presenceQuery = query(presenceRef, orderBy("lastSeen", "desc"));
   return onSnapshot(
-    presenceRef,
+    presenceQuery,
     (snap) => {
       const now = Date.now();
       const entries: PresenceEntry[] = snap.docs.map((docSnap: QueryDocumentSnapshot): PresenceEntry => {
@@ -828,7 +829,8 @@ export const watchArenaPresence = (arenaId: string, onChange: (live: LivePresenc
       });
 
       const live: LivePresence[] = entries
-        .filter((presence: PresenceEntry) => presence.lastSeenSrvMs >= now - 20_000)
+        // TODO: Enable Firestore TTL on expireAt for presence collection and then drop the client-time filter if desired.
+        .filter((presence: PresenceEntry) => presence.lastSeenSrvMs >= now - 15_000)
         .map(({ lastSeenMs, lastSeenSrvMs, ...rest }: PresenceEntry) => ({
           ...rest,
           lastSeen: lastSeenMs || lastSeenSrvMs,
