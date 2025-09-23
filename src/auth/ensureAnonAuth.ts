@@ -1,33 +1,54 @@
+import { getApp } from "firebase/app";
 import { onAuthStateChanged, signInAnonymously } from "firebase/auth";
 import { auth } from "../firebase";
 
-let ready: Promise<string> | null = null;
-export const ensureAnonAuth = (): Promise<string> => {
-  if (ready) return ready;
-  const promise = new Promise<string>((resolve, reject) => {
-    const off = onAuthStateChanged(auth, async (u) => {
-      if (u) {
-        off();
-        console.info("[ARENA] auth", { uid: u.uid });
-        resolve(u.uid);
-        return;
+let inflight: Promise<string> | null = null;
+
+export async function ensureAnonAuth(retryMs = 0): Promise<string> {
+  if (inflight) return inflight;
+  console.info("[ARENA] firebase-project", { projectId: getApp().options.projectId });
+
+  inflight = (async () => {
+    if (auth.currentUser) {
+      const uid = auth.currentUser.uid;
+      console.info("[ARENA] auth", { uid });
+      return uid;
+    }
+
+    try {
+      await signInAnonymously(auth);
+      const uid = await new Promise<string>((resolve, reject) => {
+        const off = onAuthStateChanged(
+          auth,
+          (u) => {
+            off();
+            if (u) {
+              resolve(u.uid);
+            } else {
+              reject(new Error("anon-auth-missing-user"));
+            }
+          },
+          (err) => {
+            off();
+            reject(err);
+          },
+        );
+      });
+      console.info("[ARENA] auth", { uid });
+      return uid;
+    } catch (e) {
+      inflight = null;
+      if (retryMs > 0) {
+        await new Promise((r) => setTimeout(r, retryMs));
+        return ensureAnonAuth(0);
       }
-      try {
-        const cred = await signInAnonymously(auth);
-        off();
-        console.info("[ARENA] auth", { uid: cred.user.uid });
-        resolve(cred.user.uid);
-      } catch (e) {
-        off();
-        ready = null;
-        console.error("[ARENA] auth-failed", e);
-        reject(e);
-      }
-    });
-  });
-  ready = promise.catch((error) => {
-    ready = null;
-    throw error;
-  });
-  return ready;
-};
+      throw e;
+    }
+  })();
+
+  try {
+    return await inflight;
+  } finally {
+    if (!auth.currentUser) inflight = null;
+  }
+}
