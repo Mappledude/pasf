@@ -35,16 +35,15 @@ service cloud.firestore {
         allow update, delete: if isOwnerUpdate();
       }
 
-      // Inputs fan-in: inputs/{presenceId}/events/{eventId}
+      // Inputs fan-in: inputs/{presenceId}
       match /inputs/{presenceId} {
         allow read: if true;
 
-        match /events/{eventId} {
-          allow read: if true;
-          allow create: if authed()
-            && request.resource.data.authUid == request.auth.uid
-            && request.resource.data.presenceId == presenceId;
-        }
+        allow create: if isOwnerCreate() && request.resource.data.presenceId == presenceId;
+        allow update: if isOwnerUpdate()
+          && resource.data.presenceId == presenceId
+          && (!('presenceId' in request.resource.data) || request.resource.data.presenceId == presenceId);
+        allow delete: if isOwnerUpdate() && resource.data.presenceId == presenceId;
       }
     }
 
