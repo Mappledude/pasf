@@ -1,9 +1,11 @@
 import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import { ensureAnonAuth } from "../auth/ensureAnonAuth";
 import {
+  auth,
   createArena,
   createPlayer,
   ensureBossProfile,
+  firebaseConfig,
   listPlayers,
   normalizePasscode,
   db,
@@ -22,7 +24,8 @@ const extractErrorMessage = (error: unknown) => {
 };
 
 const AdminPage = () => {
-  const { loading } = useAuth(); // true until anon auth ready
+  const { loading, user } = useAuth(); // true until anon auth ready
+  const [adminUid, setAdminUid] = useState<string | null>(null);
 
   // Boss
   const [bossName, setBossName] = useState("Boss");
@@ -64,10 +67,40 @@ const AdminPage = () => {
   const logText = useMemo(() => logEntries.join("\n"), [logEntries]);
 
   useEffect(() => {
+    const nextUid = user?.uid ?? auth.currentUser?.uid ?? null;
+    setAdminUid(nextUid);
+  }, [user]);
+
+  useEffect(() => {
     const bootstrap = async () => {
       try {
         setStatus({ message: "Booting admin console…", tone: "info" });
-        await ensureAnonAuth();
+        const ensuredUid = await ensureAnonAuth();
+        const currentUser = auth.currentUser;
+        const resolvedUid = currentUser?.uid ?? ensuredUid ?? null;
+        setAdminUid(resolvedUid);
+        const apiKeyPrefix = firebaseConfig.apiKey?.slice(0, 8) ?? "";
+        appendLog(
+          `[CFG] projectId=${firebaseConfig.projectId ?? "(unknown)"} authDomain=${
+            firebaseConfig.authDomain ?? "(unknown)"
+          } apiKeyPrefix=${apiKeyPrefix}`,
+          "info",
+          {
+            action: "bootstrap",
+            projectId: firebaseConfig.projectId,
+            authDomain: firebaseConfig.authDomain,
+            apiKeyPrefix,
+          },
+        );
+        appendLog(
+          `[AUTH] uid=${resolvedUid ?? "(none)"} isAnonymous=${String(currentUser?.isAnonymous ?? "unknown")}`,
+          "info",
+          {
+            action: "bootstrap",
+            uid: resolvedUid,
+            isAnonymous: currentUser?.isAnonymous ?? null,
+          },
+        );
         await ensureBossProfile(bossName);
         await fetchPlayers();
         setStatus({ message: "Console ready.", tone: "info" });
@@ -96,11 +129,24 @@ const AdminPage = () => {
     }
   };
 
+  const ensureAdminIdentity = (action: string) => {
+    const uid = auth.currentUser?.uid ?? null;
+    if (!uid) {
+      const message = "Authentication required; reload the admin console.";
+      appendLog(`[AUTH] ${action} aborted: missing UID`, "error", { action, reason: "missing-uid" });
+      setStatus({ message, tone: "error" });
+      return null;
+    }
+    setAdminUid(uid);
+    return uid;
+  };
+
   const handleEnsureBossProfile = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setStatus({ message: "Saving boss profile…", tone: "info" });
     try {
       await ensureAnonAuth();
+      if (!ensureAdminIdentity("ensureBossProfile")) return;
       await ensureBossProfile(bossName);
       setStatus({ message: "Boss profile updated.", tone: "info" });
       appendLog(`Boss profile updated: ${bossName}`, "info", { action: "ensureBossProfile" });
@@ -116,6 +162,7 @@ const AdminPage = () => {
     setStatus({ message: "Creating player…", tone: "info" });
     try {
       await ensureAnonAuth();
+      if (!ensureAdminIdentity("createPlayer")) return;
       await createPlayer({
         codename: playerCodename,
         passcode: normalizePasscode(playerPasscode), // ✅ normalized
@@ -137,6 +184,7 @@ const AdminPage = () => {
     setStatus({ message: "Creating arena…", tone: "info" });
     try {
       await ensureAnonAuth();
+      if (!ensureAdminIdentity("createArena")) return;
       await createArena({
         name: arenaName,
         description: arenaDescription || undefined,
@@ -162,6 +210,7 @@ const AdminPage = () => {
     setStatus({ message: `Deleting player ${playerId}…`, tone: "info" });
     try {
       await ensureAnonAuth();
+      if (!ensureAdminIdentity("deletePlayer")) return;
       await deleteDoc(doc(db, "players", playerId));
       appendLog(`Player deleted: ${playerId}`, "info", { action: "deletePlayer", playerId });
       setStatus({ message: `Player ${playerId} deleted.`, tone: "info" });
@@ -183,6 +232,7 @@ const AdminPage = () => {
     setStatus({ message: `Deleting arena ${arenaId}…`, tone: "info" });
     try {
       await ensureAnonAuth();
+      if (!ensureAdminIdentity("deleteArena")) return;
       const arenaRef = doc(db, "arenas", arenaId);
       const [stateSnapshot, presenceSnapshot] = await Promise.all([
         getDocs(collection(arenaRef, "state")),
@@ -222,7 +272,7 @@ const AdminPage = () => {
     }
   };
 
-  const formsDisabled = loading;
+  const formsDisabled = loading || !adminUid;
   const copyDisabled = logEntries.length === 0;
   const statusTone = status?.tone ?? (loading ? "info" : "info");
   const statusMessage = useMemo(() => {
