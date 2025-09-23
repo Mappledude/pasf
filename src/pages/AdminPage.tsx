@@ -40,7 +40,7 @@ const AdminPage = () => {
 
   // Players form
   const [playerCodename, setPlayerCodename] = useState("");
-  the const [playerPasscode, setPlayerPasscode] = useState("");
+  const [playerPasscode, setPlayerPasscode] = useState("");
 
   // Arenas form
   const [arenaName, setArenaName] = useState("");
