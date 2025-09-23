@@ -20,6 +20,7 @@ export function useArenaRuntime(
   const [bootError, setBootError] = useState<string | null>(null);
   const [nextRetryAt, setNextRetryAt] = useState<number | undefined>(undefined);
   const [lastBootErrorAt, setLastBootErrorAt] = useState<number | null>(null);
+  const [probeWarning, setProbeWarning] = useState(false);
 
   const offRef = useRef<() => void>();
   const stopPresenceRef = useRef<() => Promise<void>>();
@@ -40,6 +41,7 @@ export function useArenaRuntime(
 
     const resetRuntime = () => {
       setPresenceId(undefined);
+      setProbeWarning(false);
       // stop presence heartbeat if running
       const stopPresence = stopPresenceRef.current;
       stopPresenceRef.current = undefined;
@@ -67,10 +69,31 @@ export function useArenaRuntime(
         }
 
         // 1) Ensure auth
+        setBootError(null);
+        setProbeWarning(false);
         await ensureAnonAuth();
         if (cancelled) return;
 
-        // 2) Start presence FIRST (so roster shows even if seeding fails)
+        // 2) Seed arena docs / probe rules (non-fatal on permission)
+        let nonFatalProbe = false;
+        try {
+          const result = await ensureArenaFixed(arenaId);
+          nonFatalProbe = Boolean(result?.probeWarning);
+          console.info("[ARENA] seeded", { arenaId });
+        } catch (seedErr: any) {
+          const code = seedErr?.code ?? seedErr?.name;
+          const message = String(seedErr?.message ?? seedErr);
+          if (code === "permission-denied") {
+            nonFatalProbe = true;
+            console.warn("[ARENA] rules-probe non-fatal", { arenaId, code, message });
+          } else {
+            throw seedErr;
+          }
+        }
+        if (cancelled) return;
+        setProbeWarning(nonFatalProbe);
+
+        // 3) Start presence once seeding completes (or is skipped)
         const { presenceId: myPresenceId, stop } = await startPresence(arenaId, playerId, profile);
         if (cancelled) {
           await stop();
@@ -82,14 +105,6 @@ export function useArenaRuntime(
         setNextRetryAt(undefined);
         stopPresenceRef.current = stop;
         console.info("[PRESENCE] started", { arenaId, presenceId: myPresenceId });
-
-        // 3) Try to seed arena docs; do not fail boot if this is blocked by rules
-        try {
-          await ensureArenaFixed(arenaId);
-          console.info("[ARENA] seeded", { arenaId });
-        } catch (seedErr: any) {
-          console.warn("[ARENA] seed-skipped", { message: String(seedErr?.message ?? seedErr) });
-        }
 
         if (cancelled) {
           return;
@@ -214,5 +229,14 @@ export function useArenaRuntime(
     };
   }, [arenaId]);
 
-  return { presenceId, live, stable, enqueueInput, bootError, lastBootErrorAt, nextRetryAt };
+  return {
+    presenceId,
+    live,
+    stable,
+    enqueueInput,
+    bootError,
+    lastBootErrorAt,
+    nextRetryAt,
+    probeWarning,
+  };
 }
