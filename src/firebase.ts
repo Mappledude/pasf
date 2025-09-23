@@ -798,7 +798,7 @@ export const resolveDisplayName = (
 ) => {
   if (profile?.displayName) return profile.displayName;
   if (player?.name) return player.name;
-  const tail = (uid ?? "").slice(-2) || "??";
+  const tail = (uid ?? "").slice(-4) || "0000";
   return `Player ${tail}`;
 };
 
@@ -818,7 +818,10 @@ export const watchArenaPresence = (arenaId: string, onChange: (live: LivePresenc
       const presenceId = typeof data.presenceId === "string" && data.presenceId ? data.presenceId : docSnap.id;
       const lastSeenMs = toMillisSafe(data.lastSeen ?? data.lastSeenSrv);
       const lastSeenSrvMs = toMillisSafe(data.lastSeenSrv);
-      const displayNameRaw = typeof data.displayName === "string" ? data.displayName.trim() : "";
+      const displayNameSource =
+        (typeof data.dn === "string" ? data.dn : undefined) ??
+        (typeof data.displayName === "string" ? data.displayName : undefined);
+      const displayNameRaw = typeof displayNameSource === "string" ? displayNameSource.trim() : "";
       const displayName = displayNameRaw || resolveDisplayName(undefined, undefined, authUid);
 
       return {
