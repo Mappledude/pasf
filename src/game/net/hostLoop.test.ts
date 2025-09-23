@@ -1,142 +1,118 @@
 // @ts-nocheck
 import { describe, expect, it } from "vitest";
 import { startHostLoop } from "./hostLoop";
-import type { LivePresence, ArenaInputSnapshot } from "../../firebase";
+import type { LivePresence } from "../../firebase";
 
 const { beforeEach, afterEach, vi } = globalThis as any;
 
-// Keep real mocks so we can call .mockClear() and inspect calls.
 const infoMock = vi.fn();
 const errorMock = vi.fn();
-const logger = { info: infoMock, error: errorMock } as unknown as typeof console;
 
-let presenceCallback: ((entries: LivePresence[]) => void) | undefined;
-let inputsCallback: ((snapshots: ArenaInputSnapshot[]) => void) | undefined;
+describe("startHostLoop", () => {
+  let originalRaf: typeof requestAnimationFrame | undefined;
+  let rafCallback: FrameRequestCallback | undefined;
+  let currentNow = 0;
 
-const writeArenaStateMock = vi.fn(async () => {
-  /* no-op */
-});
+  const runNextFrame = async () => {
+    expect(rafCallback).toBeTypeOf("function");
+    const cb = rafCallback!;
+    rafCallback = undefined;
+    await cb(0);
+  };
 
-vi.mock("../../firebase", () => ({
-  db: {} as unknown,
-  watchArenaInputs: vi.fn(
-    (_arenaId: string, cb: (snapshots: ArenaInputSnapshot[]) => void) => {
-      inputsCallback = cb;
-      return () => undefined;
-    },
-  ),
-  watchArenaPresence: vi.fn((_arenaId: string, cb: (entries: LivePresence[]) => void) => {
-    presenceCallback = cb;
-    return () => undefined;
-  }),
-  writeArenaState: (...args: Parameters<typeof writeArenaStateMock>) =>
-    writeArenaStateMock(...args),
-}));
-
-describe("startHostLoop combat", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
-    writeArenaStateMock.mockClear();
     infoMock.mockClear();
     errorMock.mockClear();
-    presenceCallback = undefined;
-    inputsCallback = undefined;
+    originalRaf = (globalThis as any).requestAnimationFrame;
+    (globalThis as any).requestAnimationFrame = (cb: FrameRequestCallback) => {
+      rafCallback = cb;
+      return 0;
+    };
+    currentNow = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => currentNow);
+    vi.spyOn(console, "info").mockImplementation(infoMock);
+    vi.spyOn(console, "error").mockImplementation(errorMock);
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
+    if (originalRaf) {
+      (globalThis as any).requestAnimationFrame = originalRaf;
+    } else {
+      delete (globalThis as any).requestAnimationFrame;
+    }
+    rafCallback = undefined;
   });
 
-  it("applies damage when an attack lands", async () => {
-    const controller = startHostLoop({
-      arenaId: "arena-1",
-      writerAuthUid: "p1",
-      writerPresenceId: "p1",
-      log: logger as any,
+  it("filters invalid inputs and writes state for valid ones", async () => {
+    const live: LivePresence[] = [
+      {
+        id: "p1",
+        presenceId: "p1",
+        authUid: "p1",
+        lastSeen: new Date().toISOString(),
+      } as LivePresence,
+      {
+        id: "p2",
+        presenceId: "p2",
+        authUid: "p2",
+        lastSeen: new Date().toISOString(),
+      } as LivePresence,
+    ];
+
+    const inputQueue: any[] = [];
+    const isWriter = vi.fn(() => true);
+    const getLivePresence = vi.fn(() => live);
+    const pullInputs = vi.fn(async () => {
+      const payload = [...inputQueue];
+      inputQueue.length = 0;
+      return payload;
     });
+    const stepSim = vi.fn();
+    const writeState = vi.fn(async () => {
+      /* no-op */
+    });
+
+    const stop = startHostLoop({
+      arenaId: "arena-1",
+      isWriter,
+      getLivePresence,
+      pullInputs,
+      stepSim,
+      writeState,
+    });
+
     try {
-      // Avoid toBeDefined typing issues; assert via boolean
-      expect(Boolean(presenceCallback)).toBe(true);
-      expect(Boolean(inputsCallback)).toBe(true);
+      // First frame shouldn't tick because dt < target threshold
+      currentNow = 0;
+      await runNextFrame();
+      expect(stepSim).not.toHaveBeenCalled();
 
-      const nowIso = new Date().toISOString();
-      presenceCallback?.([
-        {
-          id: "p1",
-          presenceId: "p1",
-          authUid: "p1",
-          lastSeen: nowIso,
-        } as unknown as LivePresence,
-        {
-          id: "p2",
-          presenceId: "p2",
-          authUid: "p2",
-          lastSeen: nowIso,
-        } as unknown as LivePresence,
-      ]);
+      // Queue inputs and advance enough time to trigger a simulation step
+      const validInput = { presenceId: "p1", authUid: "p1" };
+      const missingPresence = { presenceId: "p3", authUid: "p3" };
+      const authMismatch = { presenceId: "p2", authUid: "wrong" };
+      inputQueue.push(validInput, missingPresence, authMismatch);
 
-      const commands: Record<string, ArenaInputSnapshot> = {
-        p1: {
-          playerId: "p1",
-          presenceId: "p1",
-          authUid: "p1",
-          right: false,
-          left: false,
-          jump: false,
-          attack: false,
-          attackSeq: 0,
-        } as unknown as ArenaInputSnapshot,
-        p2: {
-          playerId: "p2",
-          presenceId: "p2",
-          authUid: "p2",
-          right: false,
-          left: false,
-          jump: false,
-          attack: false,
-          attackSeq: 0,
-        } as unknown as ArenaInputSnapshot,
-      };
+      currentNow = 100; // > 1 / 12 s (~83ms)
+      await runNextFrame();
 
-      const pushInputs = () => {
-        inputsCallback?.([commands.p1, commands.p2]);
-      };
+      expect(isWriter).toHaveBeenCalled();
+      expect(getLivePresence).toHaveBeenCalled();
+      expect(pullInputs).toHaveBeenCalledTimes(1);
+      expect(stepSim).toHaveBeenCalledTimes(1);
+      expect(stepSim.mock.calls[0][0]).toBe(100);
+      expect(stepSim.mock.calls[0][1]).toEqual([validInput]);
+      expect(writeState).toHaveBeenCalledTimes(1);
 
-      pushInputs();
-      await vi.advanceTimersByTimeAsync(100);
-
-      commands.p1.right = true as any;
-      commands.p2.left = true as any;
-      pushInputs();
-      await vi.advanceTimersByTimeAsync(1_100);
-
-      commands.p1.right = false as any;
-      commands.p2.left = false as any;
-      pushInputs();
-      await vi.advanceTimersByTimeAsync(100);
-
-      commands.p1.attack = true as any;
-      commands.p1.attackSeq = ((commands.p1.attackSeq as number) ?? 0) + 1;
-      pushInputs();
-      await vi.advanceTimersByTimeAsync(400);
-
-      commands.p1.attack = false as any;
-      pushInputs();
-
-      const hpValues = writeArenaStateMock.mock.calls
-        .map((args: unknown[]) => (args[1] as any)?.entities?.p2?.hp as unknown)
-        .filter((value: unknown): value is number => typeof value === "number");
-
-      expect(hpValues.some((hp: number) => hp < 100)).toBe(true);
-      expect((hpValues[hpValues.length - 1] ?? 100) <= 90).toBe(true);
-
-      const hitLogged = infoMock.mock.calls.some((call: unknown[]) =>
-        String(call[0]).includes("[HIT]"),
-      );
-      expect(hitLogged).toBe(true);
+      const logMessages = infoMock.mock.calls.map((call) => call[0]);
+      expect(logMessages.some((msg) => String(msg).includes("[INPUT] rejected"))).toBe(true);
+      expect(logMessages.some((msg) => String(msg).includes("[STATE] wrote"))).toBe(true);
     } finally {
-      controller.stop();
+      stop();
     }
   });
 });
