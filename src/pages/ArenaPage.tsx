@@ -4,26 +4,20 @@ import { useParams } from "react-router-dom";
 
 import { useAuth } from "../context/AuthContext";
 import { makeGame } from "../game/phaserGame";
-import ArenaScene, { type ArenaSceneConfig } from "../game/arena/ArenaScene";
 import DebugDock from "../components/DebugDock";
 import { useArenaRuntime } from "../utils/useArenaRuntime";
+import { db } from "../firebase";
+import ArenaScene, { type ArenaSceneOptions } from "../arena/ArenaScene";
 
 const ARENA_WIDTH = 960;
 const ARENA_HEIGHT = 540;
-const ARENA_GROUND_HEIGHT = 40;
-const PLAYER_FLOOR_OFFSET = 60;
-const DEFAULT_SPAWN = {
-  x: 240,
-  y: ARENA_HEIGHT - ARENA_GROUND_HEIGHT - PLAYER_FLOOR_OFFSET,
-};
-
 export default function ArenaPage() {
   // Route param is /arena/:id — default to CLIFF and normalize to uppercase.
   const { arenaId: routeArenaId } = useParams<{ arenaId?: string }>();
   const arenaId = (routeArenaId ?? "CLIFF").toUpperCase();
 
   // Auth (for display/codename only)
-  const { user, player } = useAuth();
+  const { player } = useAuth();
 
   // Runtime hook provides presence + inputs (and any boot error upstream)
   const { presenceId, live, stable, enqueueInput, bootError, probeWarning } =
@@ -32,9 +26,9 @@ export default function ArenaPage() {
   // Phaser mounts regardless of Firestore success/failure
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
-  const latestConfigRef = useRef<ArenaSceneConfig>();
+  const sceneRef = useRef<ArenaScene | null>(null);
 
-  const [sceneBooted, setSceneBooted] = useState(false);
+  const [gameReady, setGameReady] = useState(false);
   const [gameBootError, setGameBootError] = useState<string | null>(null);
 
   const codename = useMemo(() => {
@@ -43,30 +37,13 @@ export default function ArenaPage() {
     return "Agent";
   }, [player?.codename, player?.displayName]);
 
-  const meAuthUid = user?.uid ?? null;
-  const meId = presenceId ?? meAuthUid ?? `local-${arenaId}`;
-
-  const sceneConfig = useMemo<ArenaSceneConfig>(
-    () => ({
-      arenaId,
-      me: { id: meId, codename, authUid: meAuthUid ?? undefined },
-      spawn: { ...DEFAULT_SPAWN },
-    }),
-    [arenaId, codename, meAuthUid, meId],
-  );
-
-  // Keep the latest scene config in a ref for safe restarts
-  useEffect(() => {
-    latestConfigRef.current = sceneConfig;
-  }, [sceneConfig]);
-
   // Boot Phaser (unconditional); never block canvas on Firestore
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     let disposed = false;
-    setSceneBooted(false);
+    setGameReady(false);
     setGameBootError(null);
 
     const config: Phaser.Types.Core.GameConfig = {
@@ -75,7 +52,7 @@ export default function ArenaPage() {
       height: ARENA_HEIGHT,
       parent: container,
       backgroundColor: "#0a0a0a",
-      physics: { default: "arcade", arcade: { gravity: { x: 0, y: 900 }, debug: false } },
+      physics: { default: "arcade", arcade: { gravity: { x: 0, y: 0 }, debug: false } },
       scene: [],
     };
 
@@ -83,42 +60,120 @@ export default function ArenaPage() {
       console.info("[ARENA] phaser-boot", { arenaId });
       const game = makeGame(config);
       gameRef.current = game;
-      const payload = latestConfigRef.current ?? sceneConfig;
-      game.scene.add("Arena", ArenaScene, true, payload);
-      if (!disposed) setSceneBooted(true);
+      if (!disposed) setGameReady(true);
     } catch (err) {
       console.error("[ARENA] phaser-boot-failed", err);
       if (!disposed) setGameBootError(err instanceof Error ? err.message : String(err));
     }
 
     return () => {
-      if (!disposed) setSceneBooted(false);
+      if (!disposed) setGameReady(false);
       disposed = true;
       const game = gameRef.current;
       if (game) {
         console.info("[ARENA] phaser-destroy");
+        try {
+          const existing = sceneRef.current;
+          if (existing) {
+            const key = existing.scene.key;
+            try {
+              if (game.scene.isActive(key)) {
+                game.scene.stop(key);
+              }
+            } catch (stopErr) {
+              console.warn("[ARENA] scene-stop-failed", stopErr);
+            }
+            try {
+              game.scene.remove(key);
+            } catch (removeErr) {
+              console.warn("[ARENA] scene-remove-failed", removeErr);
+            }
+            sceneRef.current = null;
+          }
+        } catch (sceneErr) {
+          console.warn("[ARENA] scene-cleanup-skipped", sceneErr);
+        }
         game.destroy(true);
         gameRef.current = null;
       }
     };
   }, [arenaId]);
 
-  // If config changes after boot, restart the scene with the new payload
+  // Mount the arena actor scene once presence is ready and the game exists
   useEffect(() => {
-    if (!sceneBooted) return;
     const game = gameRef.current;
-    if (!game) return;
-    const payload = latestConfigRef.current ?? sceneConfig;
-    const arenaScene = game.scene.getScene("Arena");
-    if (!arenaScene) return;
-    console.info("[ARENA] scene-restart", { arenaId: payload.arenaId, meId: payload.me.id });
-    arenaScene.scene.restart(payload);
-  }, [sceneBooted, sceneConfig]);
+    if (!game || !gameReady) {
+      return () => {};
+    }
+
+    if (!presenceId) {
+      if (sceneRef.current) {
+        const existing = sceneRef.current;
+        const key = existing.scene.key;
+        try {
+          if (game.scene.isActive(key)) {
+            game.scene.stop(key);
+          }
+        } catch (stopErr) {
+          console.warn("[ARENA] scene-stop-failed", stopErr);
+        }
+        try {
+          game.scene.remove(key);
+        } catch (removeErr) {
+          console.warn("[ARENA] scene-remove-failed", removeErr);
+        }
+        sceneRef.current = null;
+      }
+      return () => {};
+    }
+
+    const opts: ArenaSceneOptions = {
+      db,
+      arenaId,
+      uid: presenceId,
+      dn: codename,
+    };
+
+    const existing = sceneRef.current;
+    if (existing) {
+      existing.updateOptions(opts);
+      return () => {};
+    }
+
+    const scene = new ArenaScene(opts);
+    try {
+      game.scene.add("arena", scene, true);
+      sceneRef.current = scene;
+    } catch (error) {
+      console.error("[ARENA] scene-add-failed", error);
+      setGameBootError(error instanceof Error ? error.message : String(error));
+    }
+
+    return () => {
+      if (sceneRef.current !== scene) {
+        return;
+      }
+      const key = scene.scene.key;
+      try {
+        if (game.scene.isActive(key)) {
+          game.scene.stop(key);
+        }
+      } catch (stopErr) {
+        console.warn("[ARENA] scene-stop-failed", stopErr);
+      }
+      try {
+        game.scene.remove(key);
+      } catch (removeErr) {
+        console.warn("[ARENA] scene-remove-failed", removeErr);
+      }
+      sceneRef.current = null;
+    };
+  }, [arenaId, codename, gameReady, presenceId]);
 
   // Non-blocking overlay to surface boot/runtime status
   const overlayState = useMemo(() => {
     if (gameBootError) return { tone: "error" as const, message: `Renderer offline: ${gameBootError}` };
-    if (!sceneBooted) return { tone: "info" as const, message: "Booting arena renderer…" };
+    if (!gameReady) return { tone: "info" as const, message: "Booting arena renderer…" };
     if (!presenceId) {
       if (bootError) {
         return { tone: "error" as const, message: `Arena bootstrap failed: ${bootError}` };
@@ -126,7 +181,7 @@ export default function ArenaPage() {
       return { tone: "info" as const, message: "Linking presence channel…" };
     }
     return null;
-  }, [bootError, gameBootError, presenceId, sceneBooted]);
+  }, [bootError, gameBootError, gameReady, presenceId]);
 
   const showProbeBanner = probeWarning;
 

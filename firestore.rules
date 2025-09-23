@@ -12,6 +12,14 @@ service cloud.firestore {
         allow read, write: if authed();
       }
 
+      match /actors/{actorUid} {
+        allow read: if true;
+        allow create, update, delete:
+          if request.auth != null
+          && request.auth.uid == actorUid
+          && request.resource.data.uid == request.auth.uid;
+      }
+
       match /state/{stateId} {
         allow read, write: if authed();
       }
