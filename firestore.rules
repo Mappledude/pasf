@@ -1,73 +1,40 @@
 rules_version = '2';
 service cloud.firestore {
-  match /databases/{db}/documents {
-    function authed() { return request.auth != null; }
-    function isOwnerCreate() {
-      // On CREATE, there is no resource.data; must use request.resource.data
-      return authed() && request.resource.data.authUid == request.auth.uid;
-    }
-    function isOwnerUpdate() {
-      // On UPDATE/DELETE, resource.data exists. Keep authUid immutable.
-      return authed()
-        && resource.data.authUid == request.auth.uid
-        && (
-          !('authUid' in request.resource.data)
-          || request.resource.data.authUid == resource.data.authUid
-        );
+  match /databases/{database}/documents {
+    function authed() {
+      return request.auth != null;
     }
 
     match /arenas/{arenaId} {
-      allow read: if true;
-      allow create, update: if authed(); // arena metadata
-      allow delete: if request.auth != null && request.auth.token.admin == true;
-
-      // Host-authoritative state (writer elected in app)
-      match /state/{docId} {
-        allow read: if true;
-        allow write: if authed();
-      }
+      allow read, write: if authed();
 
       match /presence/{presenceId} {
-        allow read: if true;
-        allow create: if isOwnerCreate();
-        allow update, delete: if isOwnerUpdate();
+        allow read, write: if authed();
+      }
+
+      match /state/{stateId} {
+        allow read, write: if authed();
       }
 
       match /inputs/{presenceId} {
-        allow read: if true;
+        allow read, write: if authed();
+
         match /events/{eventId} {
-          allow read: if true;
-          allow create: if authed()
-            && request.resource.data.authUid == request.auth.uid
-            && request.resource.data.presenceId == presenceId;
+          allow read, write: if authed();
         }
       }
     }
 
-    // Players (existing)
     match /players/{playerId} {
       allow read, write: if authed();
     }
 
-    // Passcodes (existing)
-    match /passcodes/{passcode} {
+    match /leaderboard/{entryId} {
       allow read, write: if authed();
     }
 
-    // Boss (new)
-    match /boss/{doc} {
+    match /{document=**} {
       allow read, write: if authed();
-    }
-
-    // Leaderboard (existing)
-    match /leaderboard/{entry} {
-      allow read: if authed();
-    }
-
-    // Meta (existing)
-    match /meta/{doc} {
-      allow read: if true;
-      allow write: if false;
     }
   }
 }
