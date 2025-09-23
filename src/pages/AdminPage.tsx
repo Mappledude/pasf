@@ -6,7 +6,9 @@ import {
   ensureBossProfile,
   listPlayers,
   normalizePasscode,
+  db,
 } from "../firebase";
+import { collection, deleteDoc, doc, getDocs } from "firebase/firestore";
 import type { PlayerProfile } from "../types/models";
 import { useArenas } from "../utils/useArenas";
 import { useAuth } from "../context/AuthContext";
@@ -41,6 +43,25 @@ const AdminPage = () => {
 
   // UI status
   const [status, setStatus] = useState<{ message: string; tone: "info" | "error" } | null>(null);
+  const [logEntries, setLogEntries] = useState<string[]>([]);
+
+  const appendLog = (
+    message: string,
+    level: "info" | "error" = "info",
+    context?: Record<string, unknown>,
+  ) => {
+    const timestamp = new Date().toISOString();
+    const entry = `[${timestamp}] ${message}`;
+    setLogEntries((prev) => [...prev, entry]);
+    const payload = { level, ...context, message };
+    if (level === "error") {
+      console.error("[ADMIN]", payload);
+    } else {
+      console.info("[ADMIN]", payload);
+    }
+  };
+
+  const logText = useMemo(() => logEntries.join("\n"), [logEntries]);
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -51,8 +72,9 @@ const AdminPage = () => {
         await fetchPlayers();
         setStatus({ message: "Console ready.", tone: "info" });
       } catch (err) {
-        console.error(err);
-        setStatus({ message: `Failed to load admin data: ${extractErrorMessage(err)}`, tone: "error" });
+        const message = extractErrorMessage(err);
+        appendLog(`Failed to load admin data: ${message}`, "error", { action: "bootstrap" });
+        setStatus({ message: `Failed to load admin data: ${message}`, tone: "error" });
       }
     };
     void bootstrap();
@@ -66,8 +88,9 @@ const AdminPage = () => {
       const playerList = await listPlayers();
       setPlayers(playerList);
     } catch (err) {
-      console.error(err);
-      setStatus({ message: `Failed to load players: ${extractErrorMessage(err)}`, tone: "error" });
+      const message = extractErrorMessage(err);
+      appendLog(`Failed to load players: ${message}`, "error", { action: "listPlayers" });
+      setStatus({ message: `Failed to load players: ${message}`, tone: "error" });
     } finally {
       setPlayersLoading(false);
     }
@@ -80,9 +103,11 @@ const AdminPage = () => {
       await ensureAnonAuth();
       await ensureBossProfile(bossName);
       setStatus({ message: "Boss profile updated.", tone: "info" });
+      appendLog(`Boss profile updated: ${bossName}`, "info", { action: "ensureBossProfile" });
     } catch (err) {
-      console.error(err);
-      setStatus({ message: `Failed to update boss profile: ${extractErrorMessage(err)}`, tone: "error" });
+      const message = extractErrorMessage(err);
+      appendLog(`Failed to update boss profile: ${message}`, "error", { action: "ensureBossProfile" });
+      setStatus({ message: `Failed to update boss profile: ${message}`, tone: "error" });
     }
   };
 
@@ -98,10 +123,12 @@ const AdminPage = () => {
       setPlayerCodename("");
       setPlayerPasscode("");
       setStatus({ message: "Player created.", tone: "info" });
+      appendLog(`Player created: ${playerCodename}`, "info", { action: "createPlayer" });
       await fetchPlayers();
     } catch (err) {
-      console.error(err);
-      setStatus({ message: `Failed to create player: ${extractErrorMessage(err)}`, tone: "error" });
+      const message = extractErrorMessage(err);
+      appendLog(`Failed to create player: ${message}`, "error", { action: "createPlayer" });
+      setStatus({ message: `Failed to create player: ${message}`, tone: "error" });
     }
   };
 
@@ -120,13 +147,83 @@ const AdminPage = () => {
       setArenaCapacity("");
       setStatus({ message: "Arena created.", tone: "info" });
       // useArenas() will update list in real-time
+      appendLog(`Arena created: ${arenaName}`, "info", { action: "createArena" });
     } catch (err) {
-      console.error(err);
-      setStatus({ message: `Failed to create arena: ${extractErrorMessage(err)}`, tone: "error" });
+      const message = extractErrorMessage(err);
+      appendLog(`Failed to create arena: ${message}`, "error", { action: "createArena" });
+      setStatus({ message: `Failed to create arena: ${message}`, tone: "error" });
+    }
+  };
+
+  const handleDeletePlayer = async (playerId: string) => {
+    if (!window.confirm(`Delete player ${playerId}? This cannot be undone.`)) {
+      return;
+    }
+    setStatus({ message: `Deleting player ${playerId}…`, tone: "info" });
+    try {
+      await ensureAnonAuth();
+      await deleteDoc(doc(db, "players", playerId));
+      appendLog(`Player deleted: ${playerId}`, "info", { action: "deletePlayer", playerId });
+      setStatus({ message: `Player ${playerId} deleted.`, tone: "info" });
+      await fetchPlayers();
+    } catch (err) {
+      const message = extractErrorMessage(err);
+      appendLog(`Failed to delete player ${playerId}: ${message}`, "error", {
+        action: "deletePlayer",
+        playerId,
+      });
+      setStatus({ message: `Failed to delete player: ${message}`, tone: "error" });
+    }
+  };
+
+  const handleDeleteArena = async (arenaId: string) => {
+    if (!window.confirm(`Delete arena ${arenaId}? This removes state and presence.`)) {
+      return;
+    }
+    setStatus({ message: `Deleting arena ${arenaId}…`, tone: "info" });
+    try {
+      await ensureAnonAuth();
+      const arenaRef = doc(db, "arenas", arenaId);
+      const [stateSnapshot, presenceSnapshot] = await Promise.all([
+        getDocs(collection(arenaRef, "state")),
+        getDocs(collection(arenaRef, "presence")),
+      ]);
+      await Promise.all([
+        ...stateSnapshot.docs.map((snap) => deleteDoc(snap.ref)),
+        ...presenceSnapshot.docs.map((snap) => deleteDoc(snap.ref)),
+      ]);
+      await deleteDoc(arenaRef);
+      appendLog(`Arena deleted: ${arenaId}`, "info", { action: "deleteArena", arenaId });
+      setStatus({ message: `Arena ${arenaId} deleted.`, tone: "info" });
+    } catch (err) {
+      const message = extractErrorMessage(err);
+      appendLog(`Failed to delete arena ${arenaId}: ${message}`, "error", {
+        action: "deleteArena",
+        arenaId,
+      });
+      setStatus({ message: `Failed to delete arena: ${message}`, tone: "error" });
+    }
+  };
+
+  const handleCopyLogs = async () => {
+    if (!logText) {
+      return;
+    }
+    try {
+      if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API unavailable");
+      }
+      await navigator.clipboard.writeText(logText);
+      setStatus({ message: "Debug log copied to clipboard.", tone: "info" });
+    } catch (err) {
+      const message = extractErrorMessage(err);
+      appendLog(`Failed to copy debug log: ${message}`, "error", { action: "copyLogs" });
+      setStatus({ message: `Failed to copy debug log: ${message}`, tone: "error" });
     }
   };
 
   const formsDisabled = loading;
+  const copyDisabled = logEntries.length === 0;
   const statusTone = status?.tone ?? (loading ? "info" : "info");
   const statusMessage = useMemo(() => {
     if (status) return status.message;
@@ -261,22 +358,32 @@ const AdminPage = () => {
               ) : players.length === 0 ? (
                 <p className="empty">No players created yet.</p>
               ) : (
-                <ul className="list">
-                  {players.map((p) => (
-                    <li key={p.id}>
-                      <div className="meta-grid">
-                        <strong>{p.codename}</strong>
-                        {p.lastActiveAt ? (
-                          <span className="muted">Last active {new Date(p.lastActiveAt).toLocaleString()}</span>
-                        ) : (
-                          <span className="muted">Created {new Date(p.createdAt).toLocaleString()}</span>
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+              <ul className="list">
+                {players.map((p) => (
+                  <li key={p.id}>
+                    <div className="meta-grid">
+                      <strong>{p.codename}</strong>
+                      {p.lastActiveAt ? (
+                        <span className="muted">Last active {new Date(p.lastActiveAt).toLocaleString()}</span>
+                      ) : (
+                        <span className="muted">Created {new Date(p.createdAt).toLocaleString()}</span>
+                      )}
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      <button
+                        className="button secondary"
+                        type="button"
+                        onClick={() => void handleDeletePlayer(p.id)}
+                        disabled={formsDisabled}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
             <section className="card">
               <div className="card-header">
@@ -311,6 +418,16 @@ const AdminPage = () => {
                           <span className="muted">Capacity ∞</span>
                         )}
                       </div>
+                      <div style={{ marginTop: 8 }}>
+                        <button
+                          className="button secondary"
+                          type="button"
+                          onClick={() => void handleDeleteArena(arena.id)}
+                          disabled={formsDisabled}
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -318,6 +435,35 @@ const AdminPage = () => {
             </section>
           </div>
         </div>
+        <section className="card">
+          <div
+            className="card-header"
+            style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}
+          >
+            <div>
+              <h2>Debug Log</h2>
+              <span className="muted">Admin operations</span>
+            </div>
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() => void handleCopyLogs()}
+              disabled={copyDisabled}
+            >
+              Copy
+            </button>
+          </div>
+          <textarea
+            value={logText}
+            readOnly
+            spellCheck={false}
+            wrap="off"
+            aria-label="Admin debug log"
+            placeholder="Actions will appear here."
+            rows={8}
+            style={{ width: "100%", fontFamily: "monospace", minHeight: 160 }}
+          />
+        </section>
       </div>
     <DebugDock />
   </>

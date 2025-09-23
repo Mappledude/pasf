@@ -53,12 +53,14 @@ describe("startHostLoop", () => {
         id: "p1",
         presenceId: "p1",
         authUid: "p1",
+        uid: "p1",
         lastSeen: new Date().toISOString(),
       } as LivePresence,
       {
         id: "p2",
         presenceId: "p2",
         authUid: "p2",
+        uid: "p2",
         lastSeen: new Date().toISOString(),
       } as LivePresence,
     ];
