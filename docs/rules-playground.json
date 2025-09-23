@@ -1,0 +1,18 @@
+{
+  "path": "/databases/(default)/documents/arenas/CLIFF/presence/testPresence",
+  "method": "create",
+  "request": {
+    "auth": { "uid": "a5SrzfmvsicZNlSDpczqAUVX52Y2" },
+    "resource": {
+      "data": {
+        "authUid": "a5SrzfmvsicZNlSDpczqAUVX52Y2",
+        "presenceId": "testPresence",
+        "displayName": "Player Y2",
+        "stage": "start",
+        "lastSeen": "REQUEST_TIME",
+        "lastSeenSrv": "REQUEST_TIME",
+        "heartbeatMs": 10000
+      }
+    }
+  }
+}
