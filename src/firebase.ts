@@ -806,13 +806,14 @@ export const watchArenaPresence = (arenaId: string, onChange: (live: LivePresenc
   return onSnapshot(
     presenceQuery,
     (snap) => {
-      const now = Date.now();
-      const entries: PresenceEntry[] = snap.docs.map((docSnap: QueryDocumentSnapshot): PresenceEntry => {
+      const nowMs = Date.now();
+      const docs = snap.docs.slice(0, 50); // safety cap; adjust if you expect >50 players
+      const entries: PresenceEntry[] = docs.map((docSnap: QueryDocumentSnapshot): PresenceEntry => {
         const data = docSnap.data() as Record<string, unknown>;
         const authUid = typeof data.authUid === "string" ? data.authUid : "";
         const playerId = typeof data.playerId === "string" ? data.playerId : undefined;
         const presenceId = typeof data.presenceId === "string" && data.presenceId ? data.presenceId : docSnap.id;
-        const lastSeenMs = toMillisSafe(data.lastSeen);
+        const lastSeenMs = toMillisSafe(data.lastSeen ?? data.lastSeenSrv);
         const lastSeenSrvMs = toMillisSafe(data.lastSeenSrv);
         const displayNameRaw = typeof data.displayName === "string" ? data.displayName.trim() : "";
         const displayName = displayNameRaw || resolveDisplayName(undefined, undefined, authUid);
@@ -829,8 +830,10 @@ export const watchArenaPresence = (arenaId: string, onChange: (live: LivePresenc
       });
 
       const live: LivePresence[] = entries
-        // TODO: Enable Firestore TTL on expireAt for presence collection and then drop the client-time filter if desired.
-        .filter((presence: PresenceEntry) => presence.lastSeenSrvMs >= now - 15_000)
+        .filter(
+          (presence: PresenceEntry) =>
+            Math.max(presence.lastSeenMs, presence.lastSeenSrvMs) >= nowMs - 15_000,
+        )
         .map(({ lastSeenMs, lastSeenSrvMs, ...rest }: PresenceEntry) => ({
           ...rest,
           lastSeen: lastSeenMs || lastSeenSrvMs,
@@ -846,6 +849,9 @@ export const watchArenaPresence = (arenaId: string, onChange: (live: LivePresenc
       console.error("[PRESENCE] watch-failed", { code: err?.code, message: err?.message });
     }
   );
+
+  // TODO(stability): Enable Firestore TTL on presence.expireAt so stale docs are auto-removed.
+  // Firestore → Rules & Indexes → TTL → Add policy on arenas/*/presence/* field "expireAt".
 };
 
 const arenaStateDoc = (arenaId: string) =>
