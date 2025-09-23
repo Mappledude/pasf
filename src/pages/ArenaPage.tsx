@@ -26,7 +26,7 @@ export default function ArenaPage() {
   const { user, player } = useAuth();
 
   // Runtime hook provides presence + inputs (and any boot error upstream)
-  const { presenceId, live, stable, enqueueInput, bootError } = useArenaRuntime(arenaId);
+  const { presenceId, live, stable, enqueueInput, bootError, lastBootErrorAt } = useArenaRuntime(arenaId);
 
   // Phaser mounts regardless of Firestore success/failure
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -124,6 +124,10 @@ export default function ArenaPage() {
   }, [bootError, gameBootError, presenceId, sceneBooted]);
 
   const permDenied = (bootError ?? "").toLowerCase().includes("permission");
+  const showPermBanner =
+    permDenied &&
+    !presenceId &&
+    (!lastBootErrorAt || Date.now() - lastBootErrorAt < 20000);
 
   return (
     <>
@@ -141,7 +145,7 @@ export default function ArenaPage() {
 
       <section className="card" style={{ marginTop: 24 }}>
         <h2 style={{ marginBottom: 12 }}>Arena Feed</h2>
-        {permDenied && (
+        {showPermBanner && (
           <div
             role="status"
             className="my-3"
@@ -170,7 +174,7 @@ export default function ArenaPage() {
           }}
         >
           <div ref={containerRef} style={{ width: ARENA_WIDTH, height: ARENA_HEIGHT, margin: "0 auto" }} />
-          {!permDenied && overlayState ? (
+          {!showPermBanner && overlayState ? (
             <div
               style={{
                 position: "absolute",

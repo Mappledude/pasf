@@ -5,6 +5,8 @@ import { nanoid } from "nanoid";
 const HEARTBEAT_MS = 10000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 
+const generatePresenceId = () => nanoid(10);
+
 export const startPresence = async (arenaId: string, playerId?: string, profile?: { displayName?: string }) => {
   const uid = auth.currentUser?.uid;
   if (!uid) {
@@ -12,7 +14,22 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
     throw new Error("no-auth");
   }
 
-  const presenceId = nanoid(10);
+  try {
+    await setDoc(
+      doc(db, "arenas", arenaId),
+      { rulesProbeAt: serverTimestamp(), rulesProbeBy: uid },
+      { merge: true },
+    );
+    console.info("[ARENA] rules-probe ok", { arenaId });
+  } catch (e: any) {
+    console.error("[ARENA] rules-probe failed", {
+      arenaId,
+      code: e?.code,
+      message: e?.message,
+    });
+  }
+
+  const presenceId = generatePresenceId();
   const ref = doc(db, "arenas", arenaId, "presence", presenceId);
   const path = ref.path;
 
@@ -55,7 +72,6 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
         presenceId,
         uid,
         path,
-        stage,
       });
     } catch (e: any) {
       consecutiveFailures += 1;
@@ -79,17 +95,6 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
       }
     }
   };
-
-  try {
-    await setDoc(
-      doc(db, "arenas", arenaId, "presence", "__probe__"),
-      { authUid: auth.currentUser?.uid ?? null, at: serverTimestamp(), stage: "probe" },
-      { merge: true },
-    );
-    console.info("[PRESENCE] probe-ok", { path: `arenas/${arenaId}/presence/__probe__` });
-  } catch (e: any) {
-    console.error("[PRESENCE] probe-failed", { code: e?.code, message: e?.message });
-  }
 
   await write("start");
   timer = setInterval(() => {

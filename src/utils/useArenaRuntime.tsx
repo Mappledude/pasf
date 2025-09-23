@@ -19,6 +19,7 @@ export function useArenaRuntime(
   const [stable, setStable] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
   const [nextRetryAt, setNextRetryAt] = useState<number | undefined>(undefined);
+  const [lastBootErrorAt, setLastBootErrorAt] = useState<number | null>(null);
 
   const offRef = useRef<() => void>();
   const stopPresenceRef = useRef<() => Promise<void>>();
@@ -57,7 +58,6 @@ export function useArenaRuntime(
     const boot = async () => {
       attempt += 1;
       const attemptInfo = { arenaId, attempt };
-      setBootError(null);
       setNextRetryAt(undefined);
       console.info("[ARENA] boot", attemptInfo);
 
@@ -78,6 +78,8 @@ export function useArenaRuntime(
         }
         setPresenceId(myPresenceId);
         setBootError(null);
+        setLastBootErrorAt(null);
+        setNextRetryAt(undefined);
         stopPresenceRef.current = stop;
         console.info("[PRESENCE] started", { arenaId, presenceId: myPresenceId });
 
@@ -93,13 +95,12 @@ export function useArenaRuntime(
           return;
         }
 
-        setBootError(null);
-        setNextRetryAt(undefined);
         console.info("[ARENA] boot-ready", { arenaId, presenceId: myPresenceId });
       } catch (e: any) {
         if (cancelled) return;
         const message = String(e?.message ?? e ?? "unknown-error");
         setBootError(message);
+        setLastBootErrorAt(Date.now());
 
         // Reset any partial state and schedule a retry with backoff
         resetRuntime();
@@ -213,5 +214,5 @@ export function useArenaRuntime(
     };
   }, [arenaId]);
 
-  return { presenceId, live, stable, enqueueInput, bootError, nextRetryAt };
+  return { presenceId, live, stable, enqueueInput, bootError, lastBootErrorAt, nextRetryAt };
 }
