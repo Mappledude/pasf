@@ -34,3 +34,14 @@ After loading the app locally, you can confirm Firebase connectivity by pasting 
 ```
 
 It signs in anonymously (if needed) and fetches the arenas collection, logging the results.
+
+## Firestore Rules Playground
+
+The repository includes a ready-to-run Rules Playground request at `docs/rules-playground.json`. To validate the presence rules:
+
+1. Open the Firebase Console → Firestore → Rules.
+2. Click **Rules Playground**.
+3. Paste the contents of `docs/rules-playground.json` into the request editor.
+4. Run the simulation and confirm it returns **ALLOW**.
+
+This payload exercises the `/arenas/CLIFF/presence/testPresence` create path with the expected `authUid`, timestamps, and heartbeat fields.

@@ -761,6 +761,34 @@ export type LivePresence = {
   presenceId?: string;
 };
 
+type PresenceEntry = {
+  id: string;
+  authUid: string;
+  playerId?: string;
+  presenceId: string;
+  lastSeenMs: number;
+  lastSeenSrvMs: number;
+  displayName: string;
+};
+
+const toMillisSafe = (value: unknown): number => {
+  if (!value) return 0;
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof value === "object" && typeof (value as { toMillis?: () => number }).toMillis === "function") {
+    try {
+      return (value as { toMillis: () => number }).toMillis();
+    } catch (error) {
+      console.warn("[PRESENCE] toMillisSafe failed", error);
+      return 0;
+    }
+  }
+  return 0;
+};
+
 export const resolveDisplayName = (
   profile?: { displayName?: string } | null,
   player?: { name?: string } | null,
@@ -776,28 +804,40 @@ export const watchArenaPresence = (arenaId: string, onChange: (live: LivePresenc
   const presenceRef = collection(doc(db, "arenas", arenaId), "presence");
   return onSnapshot(
     presenceRef,
-    async (snap) => {
+    (snap) => {
       const now = Date.now();
-      const rows = snap.docs.map((d: QueryDocumentSnapshot) => ({ id: d.id, ...(d.data() as any) }));
-      const liveRaw = rows.filter((r: any) => now - Number(r.lastSeen ?? 0) <= 20_000);
-      const cache = new Map<string, any>();
-      await Promise.all(
-        liveRaw.map(async (r: any) => {
-          if (r.playerId && !cache.has(r.playerId)) {
-            const ps = await getDoc(doc(db, "players", r.playerId));
-            cache.set(r.playerId, ps.exists() ? ps.data() : null);
-          }
-        })
+      const entries: PresenceEntry[] = snap.docs.map((docSnap: QueryDocumentSnapshot): PresenceEntry => {
+        const data = docSnap.data() as Record<string, unknown>;
+        const authUid = typeof data.authUid === "string" ? data.authUid : "";
+        const playerId = typeof data.playerId === "string" ? data.playerId : undefined;
+        const presenceId = typeof data.presenceId === "string" && data.presenceId ? data.presenceId : docSnap.id;
+        const lastSeenMs = toMillisSafe(data.lastSeen);
+        const lastSeenSrvMs = toMillisSafe(data.lastSeenSrv);
+        const displayNameRaw = typeof data.displayName === "string" ? data.displayName.trim() : "";
+        const displayName = displayNameRaw || resolveDisplayName(undefined, undefined, authUid);
+
+        return {
+          id: docSnap.id,
+          authUid,
+          playerId,
+          presenceId,
+          lastSeenMs,
+          lastSeenSrvMs,
+          displayName,
+        };
+      });
+
+      const live: LivePresence[] = entries
+        .filter((presence: PresenceEntry) => presence.lastSeenSrvMs >= now - 20_000)
+        .map(({ lastSeenMs, lastSeenSrvMs, ...rest }: PresenceEntry) => ({
+          ...rest,
+          lastSeen: lastSeenMs || lastSeenSrvMs,
+        }));
+
+      console.info(
+        "[PRESENCE] live",
+        live.map((p: LivePresence) => ({ id: p.id, dn: p.displayName })),
       );
-      const live = liveRaw.map((r: any) => ({
-        id: r.id,
-        authUid: r.authUid ?? "",
-        playerId: r.playerId,
-        lastSeen: Number(r.lastSeen ?? 0),
-        displayName: resolveDisplayName(r.profile ?? null, cache.get(r.playerId) ?? null, r.authUid ?? null),
-        presenceId: r.id,
-      }));
-      console.info("[PRESENCE] live", live.map((p: LivePresence) => ({ id: p.id, dn: p.displayName })));
       onChange(live);
     },
     (err) => {

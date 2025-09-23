@@ -1,5 +1,5 @@
 import { auth, db } from "../firebase";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { nanoid } from "nanoid";
 
 const HEARTBEAT_MS = 10000;
@@ -33,13 +33,44 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
   const ref = doc(db, "arenas", arenaId, "presence", presenceId);
   const path = ref.path;
 
-  const basePayload = {
+  const displayName = profile?.displayName?.trim() || `Player ${uid.slice(-2)}`;
+
+  const createPayload = {
     authUid: uid,
-    playerId: playerId ?? null,
-    profile: profile ?? null,
-    lastSeen: Date.now(),
+    presenceId,
+    playerId: playerId ?? uid,
+    displayName,
+    stage: "start" as const,
+    lastSeen: serverTimestamp(),
     lastSeenSrv: serverTimestamp(),
-  } as const;
+    heartbeatMs: HEARTBEAT_MS,
+  };
+
+  console.info("[PRESENCE] write-attempt", {
+    stage: "start",
+    path,
+    arenaId,
+    presenceId,
+    uid,
+    hasAuthUid: true,
+    authMatches: true,
+  });
+
+  try {
+    await setDoc(ref, createPayload, { merge: false });
+    console.info("[PRESENCE] started", { arenaId, presenceId, uid, path, displayName });
+  } catch (e: any) {
+    console.error("[PRESENCE] write-failed", {
+      stage: "start",
+      code: e?.code,
+      message: e?.message,
+      path,
+      arenaId,
+      presenceId,
+      uid,
+    });
+    throw (e instanceof Error ? e : new Error(String(e ?? "presence-start-failed")));
+  }
 
   let timer: ReturnType<typeof setInterval> | undefined;
   let consecutiveFailures = 0;
@@ -52,43 +83,36 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
     }
   };
 
-  const write = async (stage: "start" | "beat") => {
-    const payload = { ...basePayload, stage };
+  const beat = async () => {
     console.info("[PRESENCE] write-attempt", {
-      stage,
+      stage: "beat",
       path,
       arenaId,
       presenceId,
       uid,
-      hasAuthUid: Object.prototype.hasOwnProperty.call(payload, "authUid"),
-      authMatches: payload.authUid === uid,
+      hasAuthUid: true,
+      authMatches: true,
     });
 
     try {
-      await setDoc(ref, payload, { merge: true });
-      consecutiveFailures = 0;
-      console.info(stage === "start" ? "[PRESENCE] started" : "[PRESENCE] beat", {
-        arenaId,
-        presenceId,
-        uid,
-        path,
+      await updateDoc(ref, {
+        stage: "beat",
+        lastSeen: serverTimestamp(),
+        lastSeenSrv: serverTimestamp(),
       });
+      consecutiveFailures = 0;
+      console.info("[PRESENCE] beat", { arenaId, presenceId, uid, path });
     } catch (e: any) {
       consecutiveFailures += 1;
-      console.error("[PRESENCE] write-failed", {
-        stage,
+      console.error("[PRESENCE] beat-failed", {
         code: e?.code,
         message: e?.message,
         path,
         arenaId,
         presenceId,
         uid,
+        failures: consecutiveFailures,
       });
-      if (stage === "start") {
-        clearTimer();
-        const error = e instanceof Error ? e : new Error(String(e ?? "presence-start-failed"));
-        throw error;
-      }
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         console.error("[PRESENCE] heartbeat-stopped", { presenceId, failures: consecutiveFailures });
         clearTimer();
@@ -96,9 +120,8 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
     }
   };
 
-  await write("start");
   timer = setInterval(() => {
-    void write("beat");
+    void beat();
   }, HEARTBEAT_MS);
 
   const stop = async () => {
@@ -106,7 +129,11 @@ export const startPresence = async (arenaId: string, playerId?: string, profile?
     stopped = true;
     clearTimer();
     try {
-      await setDoc(ref, { lastSeen: Date.now(), lastSeenSrv: serverTimestamp(), stage: "stop" }, { merge: true });
+      await updateDoc(ref, {
+        stage: "stop",
+        lastSeen: serverTimestamp(),
+        lastSeenSrv: serverTimestamp(),
+      });
     } catch (e: any) {
       console.error("[PRESENCE] stop-failed", { code: e?.code, message: e?.message });
     }
