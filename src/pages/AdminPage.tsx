@@ -1,9 +1,12 @@
 import React, { FormEvent, useEffect, useMemo, useState } from "react";
+import { FirebaseError } from "firebase/app";
 import { ensureAnonAuth } from "../auth/ensureAnonAuth";
 import {
+  auth,
   createArena,
   createPlayer,
   ensureBossProfile,
+  firebaseConfig,
   listPlayers,
   normalizePasscode,
   db,
@@ -21,28 +24,23 @@ const extractErrorMessage = (error: unknown) => {
   return "Unknown error";
 };
 
-const extractFirestoreErrorDetails = (
-  error: unknown,
-): { message: string; code?: string } => {
-  const message = extractErrorMessage(error);
-  if (error && typeof error === "object" && "code" in (error as { code?: unknown })) {
-    const code = (error as { code?: unknown }).code;
-    if (typeof code === "string" && code) {
-      return { message, code };
-    }
+const extractFirebaseErrorDetails = (error: unknown) => {
+  if (error instanceof FirebaseError) {
+    return { code: error.code, message: error.message || "Unknown error" };
   }
-  return { message };
+  return { code: null as string | null, message: extractErrorMessage(error) };
 };
 
 const AdminPage = () => {
-  const { loading } = useAuth(); // true until anon auth ready
+  const { loading, user } = useAuth(); // true until anon auth ready
+  const [adminUid, setAdminUid] = useState<string | null>(null);
 
   // Boss
   const [bossName, setBossName] = useState("Boss");
 
   // Players form
   const [playerCodename, setPlayerCodename] = useState("");
-  const [playerPasscode, setPlayerPasscode] = useState("");
+  the const [playerPasscode, setPlayerPasscode] = useState("");
 
   // Arenas form
   const [arenaName, setArenaName] = useState("");
@@ -77,10 +75,40 @@ const AdminPage = () => {
   const logText = useMemo(() => logEntries.join("\n"), [logEntries]);
 
   useEffect(() => {
+    const nextUid = user?.uid ?? auth.currentUser?.uid ?? null;
+    setAdminUid(nextUid);
+  }, [user]);
+
+  useEffect(() => {
     const bootstrap = async () => {
       try {
         setStatus({ message: "Booting admin console…", tone: "info" });
-        await ensureAnonAuth();
+        const ensuredUid = await ensureAnonAuth();
+        const currentUser = auth.currentUser;
+        const resolvedUid = currentUser?.uid ?? ensuredUid ?? null;
+        setAdminUid(resolvedUid);
+        const apiKeyPrefix = firebaseConfig.apiKey?.slice(0, 8) ?? "";
+        appendLog(
+          `[CFG] projectId=${firebaseConfig.projectId ?? "(unknown)"} authDomain=${
+            firebaseConfig.authDomain ?? "(unknown)"
+          } apiKeyPrefix=${apiKeyPrefix}`,
+          "info",
+          {
+            action: "bootstrap",
+            projectId: firebaseConfig.projectId,
+            authDomain: firebaseConfig.authDomain,
+            apiKeyPrefix,
+          },
+        );
+        appendLog(
+          `[AUTH] uid=${resolvedUid ?? "(none)"} isAnonymous=${String(currentUser?.isAnonymous ?? "unknown")}`,
+          "info",
+          {
+            action: "bootstrap",
+            uid: resolvedUid,
+            isAnonymous: currentUser?.isAnonymous ?? null,
+          },
+        );
         await ensureBossProfile(bossName);
         await fetchPlayers();
         setStatus({ message: "Console ready.", tone: "info" });
@@ -109,18 +137,35 @@ const AdminPage = () => {
     }
   };
 
+  const ensureAdminIdentity = (action: string) => {
+    const uid = auth.currentUser?.uid ?? null;
+    if (!uid) {
+      const message = "Authentication required; reload the admin console.";
+      appendLog(`[AUTH] ${action} aborted: missing UID`, "error", { action, reason: "missing-uid" });
+      setStatus({ message, tone: "error" });
+      return null;
+    }
+    setAdminUid(uid);
+    return uid;
+  };
+
   const handleEnsureBossProfile = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setStatus({ message: "Saving boss profile…", tone: "info" });
     try {
       await ensureAnonAuth();
+      if (!ensureAdminIdentity("ensureBossProfile")) return;
       await ensureBossProfile(bossName);
       setStatus({ message: "Boss profile updated.", tone: "info" });
       appendLog(`Boss profile updated: ${bossName}`, "info", { action: "ensureBossProfile" });
     } catch (err) {
-      const message = extractErrorMessage(err);
-      appendLog(`Failed to update boss profile: ${message}`, "error", { action: "ensureBossProfile" });
-      setStatus({ message: `Failed to update boss profile: ${message}`, tone: "error" });
+      const { code, message } = extractFirebaseErrorDetails(err);
+      const detail = code ? `${code}: ${message}` : message;
+      appendLog(`Failed to update boss profile: ${detail}`, "error", {
+        action: "ensureBossProfile",
+        ...(code ? { code } : {}),
+      });
+      setStatus({ message: `Failed to update boss profile: ${detail}`, tone: "error" });
     }
   };
 
@@ -129,19 +174,23 @@ const AdminPage = () => {
     setStatus({ message: "Creating player…", tone: "info" });
     try {
       await ensureAnonAuth();
-      await createPlayer({
-        codename: playerCodename,
-        passcode: normalizePasscode(playerPasscode), // ✅ normalized
-      });
+      if (!ensureAdminIdentity("createPlayer")) return;
+      const codename = playerCodename.trim();
+      const passcode = normalizePasscode(playerPasscode);
+      await createPlayer({ codename, passcode });
       setPlayerCodename("");
       setPlayerPasscode("");
       setStatus({ message: "Player created.", tone: "info" });
-      appendLog(`Player created: ${playerCodename}`, "info", { action: "createPlayer" });
+      appendLog(`Player created: ${codename}`, "info", { action: "createPlayer" });
       await fetchPlayers();
     } catch (err) {
-      const message = extractErrorMessage(err);
-      appendLog(`Failed to create player: ${message}`, "error", { action: "createPlayer" });
-      setStatus({ message: `Failed to create player: ${message}`, tone: "error" });
+      const { code, message } = extractFirebaseErrorDetails(err);
+      const detail = code ? `${code}: ${message}` : message;
+      appendLog(`Failed to create player: ${detail}`, "error", {
+        action: "createPlayer",
+        ...(code ? { code } : {}),
+      });
+      setStatus({ message: `Failed to create player: ${detail}`, tone: "error" });
     }
   };
 
@@ -150,55 +199,61 @@ const AdminPage = () => {
     setStatus({ message: "Creating arena…", tone: "info" });
     try {
       await ensureAnonAuth();
-      await createArena({
-        name: arenaName,
-        description: arenaDescription || undefined,
-        capacity: arenaCapacity ? Number(arenaCapacity) : undefined,
-      });
+      if (!ensureAdminIdentity("createArena")) return;
+      const name = arenaName.trim();
+      const description = arenaDescription.trim() || undefined;
+      const capacity = arenaCapacity ? Number(arenaCapacity) : undefined;
+      await createArena({ name, description, capacity });
       setArenaName("");
       setArenaDescription("");
       setArenaCapacity("");
       setStatus({ message: "Arena created.", tone: "info" });
-      // useArenas() will update list in real-time
-      appendLog(`Arena created: ${arenaName}`, "info", { action: "createArena" });
+      appendLog(`Arena created: ${name}`, "info", { action: "createArena" });
+      // useArenas() will live-update
     } catch (err) {
-      const message = extractErrorMessage(err);
-      appendLog(`Failed to create arena: ${message}`, "error", { action: "createArena" });
-      setStatus({ message: `Failed to create arena: ${message}`, tone: "error" });
+      const { code, message } = extractFirebaseErrorDetails(err);
+      const detail = code ? `${code}: ${message}` : message;
+      appendLog(`Failed to create arena: ${detail}`, "error", {
+        action: "createArena",
+        ...(code ? { code } : {}),
+      });
+      setStatus({ message: `Failed to create arena: ${detail}`, tone: "error" });
     }
   };
 
   const handleDeletePlayer = async (playerId: string) => {
-    if (!window.confirm(`Delete player ${playerId}? This cannot be undone.`)) {
-      return;
-    }
+    if (!window.confirm(`Delete player ${playerId}? This cannot be undone.`)) return;
     setStatus({ message: `Deleting player ${playerId}…`, tone: "info" });
     try {
       await ensureAnonAuth();
+      if (!ensureAdminIdentity("deletePlayer")) return;
       await deleteDoc(doc(db, "players", playerId));
       appendLog(`Player deleted: ${playerId}`, "info", { action: "deletePlayer", playerId });
       setStatus({ message: `Player ${playerId} deleted.`, tone: "info" });
       await fetchPlayers();
     } catch (err) {
-      const message = extractErrorMessage(err);
-      appendLog(`Failed to delete player ${playerId}: ${message}`, "error", {
+      const { code, message } = extractFirebaseErrorDetails(err);
+      const detail = code ? `${code}: ${message}` : message;
+      appendLog(`Failed to delete player ${playerId}: ${detail}`, "error", {
         action: "deletePlayer",
         playerId,
+        ...(code ? { code } : {}),
       });
-      setStatus({ message: `Failed to delete player: ${message}`, tone: "error" });
+      setStatus({ message: `Failed to delete player: ${detail}`, tone: "error" });
     }
   };
 
   const handleDeleteArena = async (arenaId: string) => {
-    if (!window.confirm(`Delete arena ${arenaId}? This removes state and presence.`)) {
-      return;
-    }
+    if (!window.confirm(`Delete arena ${arenaId}? This removes state and presence.`)) return;
     setStatus({ message: `Deleting arena ${arenaId}…`, tone: "info" });
     try {
       await ensureAnonAuth();
+      if (!ensureAdminIdentity("deleteArena")) return;
+
       const arenaRef = doc(db, "arenas", arenaId);
       const stateCurrentRef = doc(db, "arenas", arenaId, "state", "current");
 
+      // Delete /state/current if present
       let stateDeletedCount = 0;
       const stateCurrentSnapshot = await getDoc(stateCurrentRef);
       if (stateCurrentSnapshot.exists()) {
@@ -206,12 +261,14 @@ const AdminPage = () => {
         stateDeletedCount += 1;
       }
 
+      // Delete all /presence/*
       const presenceSnapshot = await getDocs(collection(arenaRef, "presence"));
       const presenceDeletedCount = presenceSnapshot.size;
       if (presenceDeletedCount > 0) {
         await Promise.all(presenceSnapshot.docs.map((snap) => deleteDoc(snap.ref)));
       }
 
+      // Delete any other state docs just in case (shouldn't normally exist)
       const remainingStateSnapshot = await getDocs(collection(arenaRef, "state"));
       const remainingStateDocs = remainingStateSnapshot.docs.filter((snap) => snap.id !== "current");
       if (remainingStateDocs.length > 0) {
@@ -219,9 +276,10 @@ const AdminPage = () => {
         stateDeletedCount += remainingStateDocs.length;
       }
 
+      // Delete the arena doc last
       await deleteDoc(arenaRef);
-      const summary =
-        `Arena deleted: ${arenaId} (state removed: ${stateDeletedCount}, presence removed: ${presenceDeletedCount})`;
+
+      const summary = `Arena deleted: ${arenaId} (state removed: ${stateDeletedCount}, presence removed: ${presenceDeletedCount})`;
       appendLog(summary, "info", {
         action: "deleteArena",
         arenaId,
@@ -230,21 +288,19 @@ const AdminPage = () => {
       });
       setStatus({ message: summary, tone: "info" });
     } catch (err) {
-      const { message, code } = extractFirestoreErrorDetails(err);
-      const errorSummary = `Failed to delete arena ${arenaId}${code ? ` (code: ${code})` : ""}: ${message}`;
-      appendLog(errorSummary, "error", {
+      const { code, message } = extractFirebaseErrorDetails(err);
+      const detail = code ? `${code}: ${message}` : message;
+      appendLog(`Failed to delete arena ${arenaId}: ${detail}`, "error", {
         action: "deleteArena",
         arenaId,
         ...(code ? { code } : {}),
       });
-      setStatus({ message: errorSummary, tone: "error" });
+      setStatus({ message: `Failed to delete arena: ${detail}`, tone: "error" });
     }
   };
 
   const handleCopyLogs = async () => {
-    if (!logText) {
-      return;
-    }
+    if (!logText) return;
     try {
       if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
         throw new Error("Clipboard API unavailable");
@@ -258,7 +314,7 @@ const AdminPage = () => {
     }
   };
 
-  const formsDisabled = loading;
+  const formsDisabled = loading || !adminUid;
   const copyDisabled = logEntries.length === 0;
   const statusTone = status?.tone ?? (loading ? "info" : "info");
   const statusMessage = useMemo(() => {
@@ -394,32 +450,32 @@ const AdminPage = () => {
               ) : players.length === 0 ? (
                 <p className="empty">No players created yet.</p>
               ) : (
-              <ul className="list">
-                {players.map((p) => (
-                  <li key={p.id}>
-                    <div className="meta-grid">
-                      <strong>{p.codename}</strong>
-                      {p.lastActiveAt ? (
-                        <span className="muted">Last active {new Date(p.lastActiveAt).toLocaleString()}</span>
-                      ) : (
-                        <span className="muted">Created {new Date(p.createdAt).toLocaleString()}</span>
-                      )}
-                    </div>
-                    <div style={{ marginTop: 8 }}>
-                      <button
-                        className="button secondary"
-                        type="button"
-                        onClick={() => void handleDeletePlayer(p.id)}
-                        disabled={formsDisabled}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+                <ul className="list">
+                  {players.map((p) => (
+                    <li key={p.id}>
+                      <div className="meta-grid">
+                        <strong>{p.codename}</strong>
+                        {p.lastActiveAt ? (
+                          <span className="muted">Last active {new Date(p.lastActiveAt).toLocaleString()}</span>
+                        ) : (
+                          <span className="muted">Created {new Date(p.createdAt).toLocaleString()}</span>
+                        )}
+                      </div>
+                      <div style={{ marginTop: 8 }}>
+                        <button
+                          className="button secondary"
+                          type="button"
+                          onClick={() => void handleDeletePlayer(p.id)}
+                          disabled={formsDisabled}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
 
             <section className="card">
               <div className="card-header">
@@ -471,6 +527,7 @@ const AdminPage = () => {
             </section>
           </div>
         </div>
+
         <section className="card">
           <div
             className="card-header"
@@ -501,8 +558,9 @@ const AdminPage = () => {
           />
         </section>
       </div>
-    <DebugDock />
-  </>
+
+      <DebugDock />
+    </>
   );
 };
 

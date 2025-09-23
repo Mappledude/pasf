@@ -431,27 +431,27 @@ export const createArena = async (input: CreateArenaInput) => {
   const arenaId = rawId.toUpperCase();
   const now = serverTimestamp();
   try {
-    const { ensureArenaFixed } = await import("./lib/arenaRepo");
-    const { aRef, sRef, createdArena, createdState } = await ensureArenaFixed(arenaId);
+    const arenaRef = doc(db, "arenas", arenaId);
+    const arenaData: Record<string, unknown> = {
+      name: arenaId,
+      createdAt: now,
+    };
+    if (typeof input.description === "string" && input.description.trim().length > 0) {
+      arenaData.description = input.description;
+    }
+    if (typeof input.capacity === "number" && Number.isFinite(input.capacity)) {
+      arenaData.capacity = input.capacity;
+    }
+    await setDoc(arenaRef, arenaData, { merge: true });
+
+    const stateRef = doc(db, "arenas", arenaId, "state", "current");
     await setDoc(
-      aRef,
+      stateRef,
       {
-        name: input.name,
-        description: input.description ?? "",
-        capacity: input.capacity ?? null,
-        isActive: true,
-        ...(createdArena ? { createdAt: now } : {}),
+        createdAt: now,
+        writerUid: null,
       },
-      { merge: true }
-    );
-    await setDoc(
-      sRef,
-      {
-        tick: 0,
-        phase: "lobby",
-        ...(createdState ? { createdAt: now } : {}),
-      },
-      { merge: true }
+      { merge: true },
     );
     console.info(`[STATE] createArena ${arenaId} => lobby phase`);
     return arenaId;
