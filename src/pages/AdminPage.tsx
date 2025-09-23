@@ -11,7 +11,7 @@ import {
   normalizePasscode,
   db,
 } from "../firebase";
-import { collection, deleteDoc, doc, getDocs } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, getDocs } from "firebase/firestore";
 import type { PlayerProfile } from "../types/models";
 import { useArenas } from "../utils/useArenas";
 import { useAuth } from "../context/AuthContext";
@@ -28,7 +28,7 @@ const extractFirebaseErrorDetails = (error: unknown) => {
   if (error instanceof FirebaseError) {
     return { code: error.code, message: error.message || "Unknown error" };
   }
-  return { code: null, message: extractErrorMessage(error) };
+  return { code: null as string | null, message: extractErrorMessage(error) };
 };
 
 const AdminPage = () => {
@@ -40,7 +40,7 @@ const AdminPage = () => {
 
   // Players form
   const [playerCodename, setPlayerCodename] = useState("");
-  const [playerPasscode, setPlayerPasscode] = useState("");
+  the const [playerPasscode, setPlayerPasscode] = useState("");
 
   // Arenas form
   const [arenaName, setArenaName] = useState("");
@@ -175,14 +175,13 @@ const AdminPage = () => {
     try {
       await ensureAnonAuth();
       if (!ensureAdminIdentity("createPlayer")) return;
-      await createPlayer({
-        codename: playerCodename,
-        passcode: normalizePasscode(playerPasscode), // ✅ normalized
-      });
+      const codename = playerCodename.trim();
+      const passcode = normalizePasscode(playerPasscode);
+      await createPlayer({ codename, passcode });
       setPlayerCodename("");
       setPlayerPasscode("");
       setStatus({ message: "Player created.", tone: "info" });
-      appendLog(`Player created: ${playerCodename}`, "info", { action: "createPlayer" });
+      appendLog(`Player created: ${codename}`, "info", { action: "createPlayer" });
       await fetchPlayers();
     } catch (err) {
       const { code, message } = extractFirebaseErrorDetails(err);
@@ -201,17 +200,16 @@ const AdminPage = () => {
     try {
       await ensureAnonAuth();
       if (!ensureAdminIdentity("createArena")) return;
-      await createArena({
-        name: arenaName,
-        description: arenaDescription || undefined,
-        capacity: arenaCapacity ? Number(arenaCapacity) : undefined,
-      });
+      const name = arenaName.trim();
+      const description = arenaDescription.trim() || undefined;
+      const capacity = arenaCapacity ? Number(arenaCapacity) : undefined;
+      await createArena({ name, description, capacity });
       setArenaName("");
       setArenaDescription("");
       setArenaCapacity("");
       setStatus({ message: "Arena created.", tone: "info" });
-      // useArenas() will update list in real-time
-      appendLog(`Arena created: ${arenaName}`, "info", { action: "createArena" });
+      appendLog(`Arena created: ${name}`, "info", { action: "createArena" });
+      // useArenas() will live-update
     } catch (err) {
       const { code, message } = extractFirebaseErrorDetails(err);
       const detail = code ? `${code}: ${message}` : message;
@@ -224,9 +222,7 @@ const AdminPage = () => {
   };
 
   const handleDeletePlayer = async (playerId: string) => {
-    if (!window.confirm(`Delete player ${playerId}? This cannot be undone.`)) {
-      return;
-    }
+    if (!window.confirm(`Delete player ${playerId}? This cannot be undone.`)) return;
     setStatus({ message: `Deleting player ${playerId}…`, tone: "info" });
     try {
       await ensureAnonAuth();
@@ -248,25 +244,49 @@ const AdminPage = () => {
   };
 
   const handleDeleteArena = async (arenaId: string) => {
-    if (!window.confirm(`Delete arena ${arenaId}? This removes state and presence.`)) {
-      return;
-    }
+    if (!window.confirm(`Delete arena ${arenaId}? This removes state and presence.`)) return;
     setStatus({ message: `Deleting arena ${arenaId}…`, tone: "info" });
     try {
       await ensureAnonAuth();
       if (!ensureAdminIdentity("deleteArena")) return;
+
       const arenaRef = doc(db, "arenas", arenaId);
-      const [stateSnapshot, presenceSnapshot] = await Promise.all([
-        getDocs(collection(arenaRef, "state")),
-        getDocs(collection(arenaRef, "presence")),
-      ]);
-      await Promise.all([
-        ...stateSnapshot.docs.map((snap) => deleteDoc(snap.ref)),
-        ...presenceSnapshot.docs.map((snap) => deleteDoc(snap.ref)),
-      ]);
+      const stateCurrentRef = doc(db, "arenas", arenaId, "state", "current");
+
+      // Delete /state/current if present
+      let stateDeletedCount = 0;
+      const stateCurrentSnapshot = await getDoc(stateCurrentRef);
+      if (stateCurrentSnapshot.exists()) {
+        await deleteDoc(stateCurrentRef);
+        stateDeletedCount += 1;
+      }
+
+      // Delete all /presence/*
+      const presenceSnapshot = await getDocs(collection(arenaRef, "presence"));
+      const presenceDeletedCount = presenceSnapshot.size;
+      if (presenceDeletedCount > 0) {
+        await Promise.all(presenceSnapshot.docs.map((snap) => deleteDoc(snap.ref)));
+      }
+
+      // Delete any other state docs just in case (shouldn't normally exist)
+      const remainingStateSnapshot = await getDocs(collection(arenaRef, "state"));
+      const remainingStateDocs = remainingStateSnapshot.docs.filter((snap) => snap.id !== "current");
+      if (remainingStateDocs.length > 0) {
+        await Promise.all(remainingStateDocs.map((snap) => deleteDoc(snap.ref)));
+        stateDeletedCount += remainingStateDocs.length;
+      }
+
+      // Delete the arena doc last
       await deleteDoc(arenaRef);
-      appendLog(`Arena deleted: ${arenaId}`, "info", { action: "deleteArena", arenaId });
-      setStatus({ message: `Arena ${arenaId} deleted.`, tone: "info" });
+
+      const summary = `Arena deleted: ${arenaId} (state removed: ${stateDeletedCount}, presence removed: ${presenceDeletedCount})`;
+      appendLog(summary, "info", {
+        action: "deleteArena",
+        arenaId,
+        stateDeletedCount,
+        presenceDeletedCount,
+      });
+      setStatus({ message: summary, tone: "info" });
     } catch (err) {
       const { code, message } = extractFirebaseErrorDetails(err);
       const detail = code ? `${code}: ${message}` : message;
@@ -280,9 +300,7 @@ const AdminPage = () => {
   };
 
   const handleCopyLogs = async () => {
-    if (!logText) {
-      return;
-    }
+    if (!logText) return;
     try {
       if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
         throw new Error("Clipboard API unavailable");
@@ -432,32 +450,32 @@ const AdminPage = () => {
               ) : players.length === 0 ? (
                 <p className="empty">No players created yet.</p>
               ) : (
-              <ul className="list">
-                {players.map((p) => (
-                  <li key={p.id}>
-                    <div className="meta-grid">
-                      <strong>{p.codename}</strong>
-                      {p.lastActiveAt ? (
-                        <span className="muted">Last active {new Date(p.lastActiveAt).toLocaleString()}</span>
-                      ) : (
-                        <span className="muted">Created {new Date(p.createdAt).toLocaleString()}</span>
-                      )}
-                    </div>
-                    <div style={{ marginTop: 8 }}>
-                      <button
-                        className="button secondary"
-                        type="button"
-                        onClick={() => void handleDeletePlayer(p.id)}
-                        disabled={formsDisabled}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+                <ul className="list">
+                  {players.map((p) => (
+                    <li key={p.id}>
+                      <div className="meta-grid">
+                        <strong>{p.codename}</strong>
+                        {p.lastActiveAt ? (
+                          <span className="muted">Last active {new Date(p.lastActiveAt).toLocaleString()}</span>
+                        ) : (
+                          <span className="muted">Created {new Date(p.createdAt).toLocaleString()}</span>
+                        )}
+                      </div>
+                      <div style={{ marginTop: 8 }}>
+                        <button
+                          className="button secondary"
+                          type="button"
+                          onClick={() => void handleDeletePlayer(p.id)}
+                          disabled={formsDisabled}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
 
             <section className="card">
               <div className="card-header">
@@ -509,6 +527,7 @@ const AdminPage = () => {
             </section>
           </div>
         </div>
+
         <section className="card">
           <div
             className="card-header"
@@ -539,8 +558,9 @@ const AdminPage = () => {
           />
         </section>
       </div>
-    <DebugDock />
-  </>
+
+      <DebugDock />
+    </>
   );
 };
 
